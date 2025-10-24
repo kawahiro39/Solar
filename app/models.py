@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, validator
 
@@ -21,6 +21,22 @@ class PanelType(BaseModel):
     width: float = Field(..., description="Panel width in meters")
     height: float = Field(..., description="Panel height in meters")
     capacity_kw: float = Field(..., description="Panel peak power in kW")
+
+
+class PanelSeries(BaseModel):
+    id: str
+    name: str
+    panels: Dict[str, PanelType]
+    allow_mixing_within_series: bool = Field(
+        True,
+        description="Whether panels within this series can be mixed in a layout",
+    )
+
+
+class PanelManufacturer(BaseModel):
+    id: str
+    name: str
+    series: Dict[str, PanelSeries]
 
 
 class SimulationInput(BaseModel):

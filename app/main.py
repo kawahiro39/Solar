@@ -3,9 +3,15 @@ from typing import Dict
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from .models import ReportRequest, ReportResponse, SimulationInput, SimulationResult
+from .models import (
+    PanelManufacturer,
+    ReportRequest,
+    ReportResponse,
+    SimulationInput,
+    SimulationResult,
+)
 from .pdf import build_report
-from .simulation import PANEL_TYPES, simulate
+from .simulation import PANEL_CATALOG, PANEL_TYPES, simulate
 
 app = FastAPI(title="Solar Layout Simulator", version="1.0.0")
 
@@ -18,9 +24,12 @@ app.add_middleware(
 )
 
 
-@app.get("/panel-types", response_model=Dict[str, Dict])
-def get_panel_types() -> Dict[str, Dict]:
-    return {panel_id: panel.dict() for panel_id, panel in PANEL_TYPES.items()}
+@app.get("/panel-types", response_model=Dict[str, PanelManufacturer])
+def get_panel_types() -> Dict[str, PanelManufacturer]:
+    return {
+        manufacturer_id: manufacturer.dict()
+        for manufacturer_id, manufacturer in PANEL_CATALOG.items()
+    }
 
 
 @app.post("/simulate", response_model=SimulationResult)
