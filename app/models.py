@@ -43,6 +43,16 @@ class SimulationInput(BaseModel):
     roof_polygon: List[Point] = Field(..., min_items=3)
     panel_type_id: str
     alignment: Alignment
+    orientation_edge_index: int = Field(
+        0,
+        description="Index of the polygon edge used to orient the panel layout",
+        ge=0,
+    )
+    polygon_offset_cm: float = Field(
+        0.0,
+        description="Inset distance from the polygon boundary in centimetres",
+        ge=0.0,
+    )
 
     @validator("roof_polygon")
     def ensure_polygon_closed(cls, value: List[Point]) -> List[Point]:
@@ -50,10 +60,21 @@ class SimulationInput(BaseModel):
             raise ValueError("Roof polygon must have at least three points")
         return value
 
+    @validator("orientation_edge_index")
+    def ensure_edge_index(cls, value: int, values: Dict[str, List[Point]]) -> int:
+        points: List[Point] = values.get("roof_polygon", [])  # type: ignore[arg-type]
+        if points and value >= len(points):
+            raise ValueError("orientation_edge_index must reference an existing edge")
+        return value
+
 
 class PanelPlacement(BaseModel):
     panel_type_id: str
     origin: Point
+    rotation_deg: float = Field(
+        0.0,
+        description="Rotation of the panel placement in degrees, counter-clockwise",
+    )
 
 
 class SimulationResult(BaseModel):

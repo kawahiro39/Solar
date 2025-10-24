@@ -1,4 +1,8 @@
+import math
 from typing import Dict, List, Tuple
+
+from shapely import affinity
+from shapely.geometry import Polygon, box
 
 from .models import (
     Alignment,
@@ -144,19 +148,80 @@ def bounding_box(points: List[Point]) -> Tuple[float, float, float, float]:
     return min(xs), min(ys), max(xs), max(ys)
 
 
-def layout_panels(sim_input: SimulationInput, panel: PanelType) -> List[PanelPlacement]:
-    min_x, min_y, max_x, max_y = bounding_box(sim_input.roof_polygon)
-    roof_width = max_x - min_x
-    roof_height = max_y - min_y
+def _as_polygon(points: List[Point]) -> Polygon:
+    coords = [(p.x, p.y) for p in points]
+    if len(coords) < 3:
+        raise ValueError("Roof polygon must have at least three points")
+    polygon = Polygon(coords)
+    if not polygon.is_valid or polygon.area <= 0:
+        raise ValueError("Roof polygon is invalid")
+    return polygon
 
-    cols = int(roof_width / panel.width) if panel.width else 0
-    rows = int(roof_height / panel.height) if panel.height else 0
+
+def _normalize_geometry(polygon: Polygon) -> Polygon:
+    if polygon.is_empty:
+        return polygon
+    if polygon.geom_type == "Polygon":
+        return polygon
+    if polygon.geom_type == "MultiPolygon":
+        return max(polygon.geoms, key=lambda geom: geom.area)
+    raise ValueError("Unsupported geometry after polygon offset")
+
+
+def _rotate_point(
+    x: float, y: float, *, angle_rad: float, origin: Tuple[float, float]
+) -> Tuple[float, float]:
+    ox, oy = origin
+    cos_a = math.cos(angle_rad)
+    sin_a = math.sin(angle_rad)
+    tx = x - ox
+    ty = y - oy
+    rx = tx * cos_a - ty * sin_a
+    ry = tx * sin_a + ty * cos_a
+    return rx + ox, ry + oy
+
+
+def layout_panels(sim_input: SimulationInput, panel: PanelType) -> List[PanelPlacement]:
+    polygon = _as_polygon(sim_input.roof_polygon)
+
+    # Offset polygon inward to honour the requested clearance
+    offset_m = sim_input.polygon_offset_cm / 100.0
+    if offset_m > 0:
+        polygon = polygon.buffer(-offset_m)
+        if polygon.is_empty:
+            return []
+        polygon = _normalize_geometry(polygon)
+
+    if polygon.is_empty:
+        return []
+
+    points = sim_input.roof_polygon
+    edge_index = sim_input.orientation_edge_index % len(points)
+    start_point = points[edge_index]
+    end_point = points[(edge_index + 1) % len(points)]
+    angle_rad = math.atan2(end_point.y - start_point.y, end_point.x - start_point.x)
+    angle_deg = math.degrees(angle_rad)
+
+    rotation_origin = (polygon.centroid.x, polygon.centroid.y)
+    rotated_polygon = affinity.rotate(
+        polygon, -angle_deg, origin=rotation_origin, use_radians=False
+    )
+
+    min_x, min_y, max_x, max_y = rotated_polygon.bounds
+    available_width = max_x - min_x
+    available_height = max_y - min_y
+
+    if available_width <= 0 or available_height <= 0:
+        return []
+
+    cols = int(math.floor((available_width + 1e-9) / panel.width)) if panel.width else 0
+    rows = int(math.floor((available_height + 1e-9) / panel.height)) if panel.height else 0
 
     if cols == 0 or rows == 0:
         return []
 
-    horizontal_gap = roof_width - cols * panel.width
-    vertical_gap = roof_height - rows * panel.height
+    horizontal_gap = available_width - cols * panel.width
+    vertical_gap = available_height - rows * panel.height
 
     if sim_input.alignment == Alignment.LEFT:
         offset_x = min_x
@@ -170,12 +235,29 @@ def layout_panels(sim_input: SimulationInput, panel: PanelType) -> List[PanelPla
     placements: List[PanelPlacement] = []
     for row in range(rows):
         for col in range(cols):
-            origin_x = offset_x + col * panel.width
-            origin_y = offset_y + row * panel.height
+            candidate_x = offset_x + col * panel.width
+            candidate_y = offset_y + row * panel.height
+            candidate_rect = box(
+                candidate_x,
+                candidate_y,
+                candidate_x + panel.width,
+                candidate_y + panel.height,
+            )
+            if not rotated_polygon.covers(candidate_rect):
+                continue
+
+            world_x, world_y = _rotate_point(
+                candidate_x,
+                candidate_y,
+                angle_rad=angle_rad,
+                origin=rotation_origin,
+            )
+
             placements.append(
                 PanelPlacement(
                     panel_type_id=panel.id,
-                    origin=Point(x=origin_x, y=origin_y),
+                    origin=Point(x=world_x, y=world_y),
+                    rotation_deg=angle_deg,
                 )
             )
     return placements
