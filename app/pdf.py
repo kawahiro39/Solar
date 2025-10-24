@@ -55,10 +55,15 @@ def _draw_simulation_summary(c: canvas.Canvas, request: ReportRequest, panel: Pa
     lines = [
         f"パネルタイプ: {panel.name}",
         f"パネル枚数: {request.panel_count}",
-        f"推定年間発電量: {request.estimated_annual_output_kwh:.1f} kWh",
         f"屋根の形状ポイント数: {len(request.simulation.roof_polygon)}",
         f"配置基準: {request.simulation.alignment.value}",
     ]
+
+    if request.estimated_annual_output_kwh is not None:
+        lines.insert(
+            2,
+            f"推定年間発電量: {request.estimated_annual_output_kwh:.1f} kWh",
+        )
     for index, line in enumerate(lines):
         c.drawString(MARGIN, PAGE_HEIGHT - MARGIN - (index + 1) * 15, line)
 
