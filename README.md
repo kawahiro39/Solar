@@ -81,7 +81,15 @@ curl -X POST "https://<cloud-run-host>/simulate" \
   <div id="map"></div>
   <div class="controls">
     <div>
-      <label for="panel-select">パネルタイプ</label>
+      <label for="manufacturer-select">メーカー</label>
+      <select id="manufacturer-select"></select>
+    </div>
+    <div>
+      <label for="series-select">シリーズ</label>
+      <select id="series-select"></select>
+    </div>
+    <div>
+      <label for="panel-select">パネル</label>
       <select id="panel-select"></select>
     </div>
     <div>
@@ -134,18 +142,104 @@ curl -X POST "https://<cloud-run-host>/simulate" \
   map.addControl(drawControl);
 
   let currentSimulation = null;
+  let panelCatalog = {};
+  let selectedPanelId = null;
+
+  function formatPanelLabel(panel) {
+    const heightMm = Math.round(panel.height * 1000);
+    const widthMm = Math.round(panel.width * 1000);
+    const capacityW = Math.round(panel.capacity_kw * 1000);
+    return `${panel.name} (${heightMm}mm×${widthMm}mm ${capacityW}W)`;
+  }
+
+  function updatePanelOptions(series) {
+    const panelSelect = document.getElementById('panel-select');
+    panelSelect.innerHTML = '';
+
+    Object.values(series.panels).forEach(panel => {
+      const option = document.createElement('option');
+      option.value = panel.id;
+      option.textContent = formatPanelLabel(panel);
+      panelSelect.appendChild(option);
+    });
+
+    const defaultPanelId = series.panels['CS6.2-48TM-455'] ? 'CS6.2-48TM-455' : (panelSelect.options[0] ? panelSelect.options[0].value : null);
+    if (defaultPanelId) {
+      panelSelect.value = defaultPanelId;
+    }
+    selectedPanelId = panelSelect.value || null;
+  }
+
+  function updateSeriesOptions(manufacturer) {
+    const seriesSelect = document.getElementById('series-select');
+    seriesSelect.innerHTML = '';
+
+    Object.values(manufacturer.series).forEach(series => {
+      const option = document.createElement('option');
+      option.value = series.id;
+      option.textContent = series.name;
+      seriesSelect.appendChild(option);
+    });
+
+    const defaultSeriesId = manufacturer.series['tophiku6'] ? 'tophiku6' : (seriesSelect.options[0] ? seriesSelect.options[0].value : null);
+    if (defaultSeriesId) {
+      seriesSelect.value = defaultSeriesId;
+    }
+
+    const selectedSeries = manufacturer.series[seriesSelect.value];
+    if (selectedSeries) {
+      updatePanelOptions(selectedSeries);
+    }
+  }
+
+  function populateManufacturerOptions() {
+    const manufacturerSelect = document.getElementById('manufacturer-select');
+    manufacturerSelect.innerHTML = '';
+
+    Object.values(panelCatalog).forEach(manufacturer => {
+      const option = document.createElement('option');
+      option.value = manufacturer.id;
+      option.textContent = manufacturer.name;
+      manufacturerSelect.appendChild(option);
+    });
+
+    const defaultManufacturerId = panelCatalog['canadian-solar'] ? 'canadian-solar' : (manufacturerSelect.options[0] ? manufacturerSelect.options[0].value : null);
+    if (defaultManufacturerId) {
+      manufacturerSelect.value = defaultManufacturerId;
+    }
+
+    const selectedManufacturer = panelCatalog[manufacturerSelect.value];
+    if (selectedManufacturer) {
+      updateSeriesOptions(selectedManufacturer);
+    }
+  }
 
   async function fetchPanelTypes() {
     const res = await fetch(`${CLOUD_RUN_BASE_URL}/panel-types`);
-    const data = await res.json();
-    const select = document.getElementById('panel-select');
-    Object.values(data).forEach(panel => {
-      const option = document.createElement('option');
-      option.value = panel.id;
-      option.textContent = `${panel.name} (${panel.width}m x ${panel.height}m)`;
-      select.appendChild(option);
-    });
+    panelCatalog = await res.json();
+    populateManufacturerOptions();
   }
+
+  document.getElementById('manufacturer-select').addEventListener('change', (event) => {
+    const manufacturer = panelCatalog[event.target.value];
+    if (manufacturer) {
+      updateSeriesOptions(manufacturer);
+    }
+  });
+
+  document.getElementById('series-select').addEventListener('change', (event) => {
+    const manufacturerId = document.getElementById('manufacturer-select').value;
+    const manufacturer = panelCatalog[manufacturerId];
+    if (!manufacturer) return;
+    const series = manufacturer.series[event.target.value];
+    if (series) {
+      updatePanelOptions(series);
+    }
+  });
+
+  document.getElementById('panel-select').addEventListener('change', (event) => {
+    selectedPanelId = event.target.value;
+  });
 
   function getPolygonLatLngs() {
     if (drawnItems.getLayers().length === 0) return null;
@@ -175,9 +269,13 @@ curl -X POST "https://<cloud-run-host>/simulate" \
       alert('屋根のポリゴンを描画してください');
       return;
     }
+    if (!selectedPanelId) {
+      alert('パネルを選択してください');
+      return;
+    }
     const payload = {
       roof_polygon: polygon,
-      panel_type_id: document.getElementById('panel-select').value,
+      panel_type_id: selectedPanelId,
       alignment: document.getElementById('alignment-select').value
     };
     const res = await fetch(`${CLOUD_RUN_BASE_URL}/simulate`, {
@@ -216,10 +314,14 @@ curl -X POST "https://<cloud-run-host>/simulate" \
   async function generateReport() {
     if (!currentSimulation) return;
     const polygon = transformToMeters(getPolygonLatLngs());
+    if (!selectedPanelId) {
+      alert('パネルを選択してください');
+      return;
+    }
     const payload = {
       simulation: {
         roof_polygon: polygon,
-        panel_type_id: document.getElementById('panel-select').value,
+        panel_type_id: selectedPanelId,
         alignment: document.getElementById('alignment-select').value
       },
       panel_count: currentSimulation.panel_count,
