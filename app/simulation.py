@@ -1,4 +1,8 @@
+import math
 from typing import Dict, List, Tuple
+
+from shapely import affinity
+from shapely.geometry import Polygon, box, Point as ShapelyPoint
 
 from .models import (
     Alignment,
@@ -144,38 +148,159 @@ def bounding_box(points: List[Point]) -> Tuple[float, float, float, float]:
     return min(xs), min(ys), max(xs), max(ys)
 
 
+def _as_polygon(points: List[Point]) -> Polygon:
+    coords = [(p.x, p.y) for p in points]
+    if len(coords) < 3:
+        raise ValueError("Roof polygon must have at least three points")
+    polygon = Polygon(coords)
+    if not polygon.is_valid or polygon.area <= 0:
+        raise ValueError("Roof polygon is invalid")
+    return polygon
+
+
+def _normalize_geometry(polygon: Polygon) -> Polygon:
+    if polygon.is_empty:
+        return polygon
+    if polygon.geom_type == "Polygon":
+        return polygon
+    if polygon.geom_type == "MultiPolygon":
+        return max(polygon.geoms, key=lambda geom: geom.area)
+    raise ValueError("Unsupported geometry after polygon offset")
+
+
+def _rotate_point(
+    x: float, y: float, *, angle_rad: float, origin: Tuple[float, float]
+) -> Tuple[float, float]:
+    ox, oy = origin
+    cos_a = math.cos(angle_rad)
+    sin_a = math.sin(angle_rad)
+    tx = x - ox
+    ty = y - oy
+    rx = tx * cos_a - ty * sin_a
+    ry = tx * sin_a + ty * cos_a
+    return rx + ox, ry + oy
+
+
 def layout_panels(sim_input: SimulationInput, panel: PanelType) -> List[PanelPlacement]:
-    min_x, min_y, max_x, max_y = bounding_box(sim_input.roof_polygon)
-    roof_width = max_x - min_x
-    roof_height = max_y - min_y
+    polygon = _as_polygon(sim_input.roof_polygon)
 
-    cols = int(roof_width / panel.width) if panel.width else 0
-    rows = int(roof_height / panel.height) if panel.height else 0
+    # Offset polygon inward to honour the requested clearance
+    offset_m = sim_input.polygon_offset_cm / 100.0
+    if offset_m > 0:
+        polygon = polygon.buffer(-offset_m)
+        if polygon.is_empty:
+            return []
+        polygon = _normalize_geometry(polygon)
 
-    if cols == 0 or rows == 0:
+    if polygon.is_empty:
         return []
 
-    horizontal_gap = roof_width - cols * panel.width
-    vertical_gap = roof_height - rows * panel.height
+    points = sim_input.roof_polygon
+    edge_index = sim_input.orientation_edge_index % len(points)
+    start_point = points[edge_index]
+    end_point = points[(edge_index + 1) % len(points)]
 
+    edge_dx = end_point.x - start_point.x
+    edge_dy = end_point.y - start_point.y
+    edge_length = math.hypot(edge_dx, edge_dy)
+    if edge_length == 0:
+        return []
+
+    angle_rad = math.atan2(edge_dy, edge_dx)
+    angle_deg = math.degrees(angle_rad)
+
+    rotation_origin = (polygon.centroid.x, polygon.centroid.y)
+    rotated_polygon = affinity.rotate(
+        polygon, -angle_deg, origin=rotation_origin, use_radians=False
+    )
+
+    min_x, min_y, max_x, max_y = rotated_polygon.bounds
+    available_width = max_x - min_x
+    if available_width <= 0 or panel.width <= 0:
+        return []
+
+    cols = int(math.floor((available_width + 1e-9) / panel.width))
+    if cols == 0:
+        return []
+
+    horizontal_gap = available_width - cols * panel.width
     if sim_input.alignment == Alignment.LEFT:
         offset_x = min_x
     elif sim_input.alignment == Alignment.RIGHT:
-        offset_x = min_x + horizontal_gap
+        offset_x = max_x - cols * panel.width
     else:
         offset_x = min_x + horizontal_gap / 2.0
 
-    offset_y = min_y + vertical_gap / 2.0
+    midpoint = ShapelyPoint((start_point.x + end_point.x) / 2.0, (start_point.y + end_point.y) / 2.0)
+    normal = (-edge_dy / edge_length, edge_dx / edge_length)
+    # Probe a short distance along the normal to determine the interior direction
+    probe_distance = max(panel.width, panel.height) * 1e-3
+    probe_point = ShapelyPoint(
+        midpoint.x + normal[0] * probe_distance,
+        midpoint.y + normal[1] * probe_distance,
+    )
+    if not polygon.buffer(1e-9).contains(probe_point):
+        normal = (-normal[0], -normal[1])
+
+    rotated_midpoint = affinity.rotate(
+        midpoint, -angle_deg, origin=rotation_origin, use_radians=False
+    )
+    rotated_probe = affinity.rotate(
+        ShapelyPoint(
+            midpoint.x + normal[0] * probe_distance,
+            midpoint.y + normal[1] * probe_distance,
+        ),
+        -angle_deg,
+        origin=rotation_origin,
+        use_radians=False,
+    )
+
+    interior_is_positive = rotated_probe.y >= rotated_midpoint.y
+    if interior_is_positive:
+        baseline_y = min_y
+        available_height = max_y - baseline_y
+    else:
+        baseline_y = max_y
+        available_height = baseline_y - min_y
+
+    if available_height <= 0 or panel.height <= 0:
+        return []
+
+    rows = int(math.floor((available_height + 1e-9) / panel.height))
+    if rows == 0:
+        return []
 
     placements: List[PanelPlacement] = []
     for row in range(rows):
+        if interior_is_positive:
+            candidate_y = baseline_y + row * panel.height
+        else:
+            candidate_y = baseline_y - (row + 1) * panel.height
+
         for col in range(cols):
-            origin_x = offset_x + col * panel.width
-            origin_y = offset_y + row * panel.height
+            candidate_x = offset_x + col * panel.width
+            candidate_rect = box(
+                candidate_x,
+                candidate_y,
+                candidate_x + panel.width,
+                candidate_y + panel.height,
+            )
+
+            if not rotated_polygon.buffer(1e-9).covers(candidate_rect):
+                continue
+
+            world_x, world_y = _rotate_point(
+                candidate_x,
+                candidate_y,
+                angle_rad=angle_rad,
+                origin=rotation_origin,
+            )
+
             placements.append(
                 PanelPlacement(
                     panel_type_id=panel.id,
-                    origin=Point(x=origin_x, y=origin_y),
+                    origin=Point(x=world_x, y=world_y),
+                    rotation_deg=angle_deg,
                 )
             )
     return placements
