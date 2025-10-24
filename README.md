@@ -81,7 +81,15 @@ curl -X POST "https://<cloud-run-host>/simulate" \
   <div id="map"></div>
   <div class="controls">
     <div>
-      <label for="panel-select">パネルタイプ</label>
+      <label for="manufacturer-select">メーカー</label>
+      <select id="manufacturer-select"></select>
+    </div>
+    <div>
+      <label for="series-select">シリーズ</label>
+      <select id="series-select"></select>
+    </div>
+    <div>
+      <label for="panel-select">パネル</label>
       <select id="panel-select"></select>
     </div>
     <div>
@@ -134,18 +142,209 @@ curl -X POST "https://<cloud-run-host>/simulate" \
   map.addControl(drawControl);
 
   let currentSimulation = null;
+  const DEFAULT_PANEL_CATALOG = {
+    "canadian-solar": {
+      id: "canadian-solar",
+      name: "カナディアンソーラー",
+      series: {
+        tophiku6: {
+          id: "tophiku6",
+          name: "TOPHiKu6",
+          allow_mixing_within_series: true,
+          panels: {
+            "CS6.2-48TM-455": {
+              id: "CS6.2-48TM-455",
+              name: "CS6.2-48TM-455",
+              width: 1.134,
+              height: 1.762,
+              capacity_kw: 0.455
+            },
+            "CS6.2-36TM-340": {
+              id: "CS6.2-36TM-340",
+              name: "CS6.2-36TM-340",
+              width: 1.134,
+              height: 1.334,
+              capacity_kw: 0.34
+            },
+            "CS6.2-32TM-300": {
+              id: "CS6.2-32TM-300",
+              name: "CS6.2-32TM-300",
+              width: 0.767,
+              height: 1.762,
+              capacity_kw: 0.3
+            }
+          }
+        }
+      }
+    },
+    generic: {
+      id: "generic",
+      name: "汎用パネル",
+      series: {
+        reference: {
+          id: "reference",
+          name: "リファレンス",
+          allow_mixing_within_series: true,
+          panels: {
+            compact: {
+              id: "compact",
+              name: "Compact 320W",
+              width: 0.99,
+              height: 1.65,
+              capacity_kw: 0.32
+            },
+            standard: {
+              id: "standard",
+              name: "Standard 400W",
+              width: 1.0,
+              height: 1.7,
+              capacity_kw: 0.4
+            },
+            premium: {
+              id: "premium",
+              name: "Premium 450W",
+              width: 1.05,
+              height: 1.8,
+              capacity_kw: 0.45
+            },
+            wide: {
+              id: "wide",
+              name: "Wide 500W",
+              width: 1.2,
+              height: 1.6,
+              capacity_kw: 0.5
+            },
+            ultra: {
+              id: "ultra",
+              name: "Ultra 550W",
+              width: 1.1,
+              height: 2.1,
+              capacity_kw: 0.55
+            }
+          }
+        }
+      }
+    }
+  };
+  let panelCatalog = JSON.parse(JSON.stringify(DEFAULT_PANEL_CATALOG));
+  let selectedPanelId = null;
 
-  async function fetchPanelTypes() {
-    const res = await fetch(`${CLOUD_RUN_BASE_URL}/panel-types`);
-    const data = await res.json();
-    const select = document.getElementById('panel-select');
-    Object.values(data).forEach(panel => {
+  function formatPanelLabel(panel) {
+    const heightMm = Math.round(panel.height * 1000);
+    const widthMm = Math.round(panel.width * 1000);
+    const capacityW = Math.round(panel.capacity_kw * 1000);
+    return `${panel.name} (${heightMm}mm×${widthMm}mm ${capacityW}W)`;
+  }
+
+  function updatePanelOptions(series, preferredPanelId) {
+    const panelSelect = document.getElementById('panel-select');
+    panelSelect.innerHTML = '';
+
+    Object.values(series.panels).forEach(panel => {
       const option = document.createElement('option');
       option.value = panel.id;
-      option.textContent = `${panel.name} (${panel.width}m x ${panel.height}m)`;
-      select.appendChild(option);
+      option.textContent = formatPanelLabel(panel);
+      panelSelect.appendChild(option);
     });
+
+    const defaultPanelId = preferredPanelId && series.panels[preferredPanelId]
+      ? preferredPanelId
+      : (series.panels['CS6.2-48TM-455'] ? 'CS6.2-48TM-455' : (panelSelect.options[0] ? panelSelect.options[0].value : null));
+    if (defaultPanelId) {
+      panelSelect.value = defaultPanelId;
+    }
+    selectedPanelId = panelSelect.value || null;
   }
+
+  function updateSeriesOptions(manufacturer, preferences = {}) {
+    const seriesSelect = document.getElementById('series-select');
+    seriesSelect.innerHTML = '';
+
+    Object.values(manufacturer.series).forEach(series => {
+      const option = document.createElement('option');
+      option.value = series.id;
+      option.textContent = series.name;
+      seriesSelect.appendChild(option);
+    });
+
+    const defaultSeriesId = preferences.seriesId && manufacturer.series[preferences.seriesId]
+      ? preferences.seriesId
+      : (manufacturer.series['tophiku6'] ? 'tophiku6' : (seriesSelect.options[0] ? seriesSelect.options[0].value : null));
+    if (defaultSeriesId) {
+      seriesSelect.value = defaultSeriesId;
+    }
+
+    const selectedSeries = manufacturer.series[seriesSelect.value];
+    if (selectedSeries) {
+      updatePanelOptions(selectedSeries, preferences.panelId);
+    }
+  }
+
+  function populateManufacturerOptions(preferences = {}) {
+    const manufacturerSelect = document.getElementById('manufacturer-select');
+    manufacturerSelect.innerHTML = '';
+
+    Object.values(panelCatalog).forEach(manufacturer => {
+      const option = document.createElement('option');
+      option.value = manufacturer.id;
+      option.textContent = manufacturer.name;
+      manufacturerSelect.appendChild(option);
+    });
+
+    const defaultManufacturerId = preferences.manufacturerId && panelCatalog[preferences.manufacturerId]
+      ? preferences.manufacturerId
+      : (panelCatalog['canadian-solar'] ? 'canadian-solar' : (manufacturerSelect.options[0] ? manufacturerSelect.options[0].value : null));
+    if (defaultManufacturerId) {
+      manufacturerSelect.value = defaultManufacturerId;
+    }
+
+    const selectedManufacturer = panelCatalog[manufacturerSelect.value];
+    if (selectedManufacturer) {
+      updateSeriesOptions(selectedManufacturer, preferences);
+    }
+  }
+
+  async function fetchPanelTypes() {
+    try {
+      const res = await fetch(`${CLOUD_RUN_BASE_URL}/panel-types`);
+      if (!res.ok) {
+        throw new Error(`Failed to fetch panel catalog: ${res.status}`);
+      }
+      const fetchedCatalog = await res.json();
+      const preferences = {
+        manufacturerId: document.getElementById('manufacturer-select').value,
+        seriesId: document.getElementById('series-select').value,
+        panelId: document.getElementById('panel-select').value
+      };
+      panelCatalog = fetchedCatalog;
+      populateManufacturerOptions(preferences);
+    } catch (error) {
+      console.warn('パネル情報の取得に失敗したため、標準パネルを利用します。', error);
+      panelCatalog = JSON.parse(JSON.stringify(DEFAULT_PANEL_CATALOG));
+      populateManufacturerOptions();
+    }
+  }
+
+  document.getElementById('manufacturer-select').addEventListener('change', (event) => {
+    const manufacturer = panelCatalog[event.target.value];
+    if (manufacturer) {
+      updateSeriesOptions(manufacturer);
+    }
+  });
+
+  document.getElementById('series-select').addEventListener('change', (event) => {
+    const manufacturerId = document.getElementById('manufacturer-select').value;
+    const manufacturer = panelCatalog[manufacturerId];
+    if (!manufacturer) return;
+    const series = manufacturer.series[event.target.value];
+    if (series) {
+      updatePanelOptions(series);
+    }
+  });
+
+  document.getElementById('panel-select').addEventListener('change', (event) => {
+    selectedPanelId = event.target.value;
+  });
 
   function getPolygonLatLngs() {
     if (drawnItems.getLayers().length === 0) return null;
@@ -175,9 +374,13 @@ curl -X POST "https://<cloud-run-host>/simulate" \
       alert('屋根のポリゴンを描画してください');
       return;
     }
+    if (!selectedPanelId) {
+      alert('パネルを選択してください');
+      return;
+    }
     const payload = {
       roof_polygon: polygon,
-      panel_type_id: document.getElementById('panel-select').value,
+      panel_type_id: selectedPanelId,
       alignment: document.getElementById('alignment-select').value
     };
     const res = await fetch(`${CLOUD_RUN_BASE_URL}/simulate`, {
@@ -216,10 +419,14 @@ curl -X POST "https://<cloud-run-host>/simulate" \
   async function generateReport() {
     if (!currentSimulation) return;
     const polygon = transformToMeters(getPolygonLatLngs());
+    if (!selectedPanelId) {
+      alert('パネルを選択してください');
+      return;
+    }
     const payload = {
       simulation: {
         roof_polygon: polygon,
-        panel_type_id: document.getElementById('panel-select').value,
+        panel_type_id: selectedPanelId,
         alignment: document.getElementById('alignment-select').value
       },
       panel_count: currentSimulation.panel_count,
@@ -250,6 +457,7 @@ curl -X POST "https://<cloud-run-host>/simulate" \
 
   document.getElementById('simulate-btn').addEventListener('click', simulate);
   document.getElementById('report-btn').addEventListener('click', generateReport);
+  populateManufacturerOptions();
   fetchPanelTypes();
 </script>
 ```
