@@ -41,7 +41,11 @@ def _draw_roof_layout(c: canvas.Canvas, request: ReportRequest, placements: List
         y = (placement.origin.y - min_y) * scale + offset_y
         width = panel.width * scale
         height = panel.height * scale
-        c.rect(x, y, width, height, fill=1, stroke=0)
+        c.saveState()
+        c.translate(x, y)
+        c.rotate(placement.rotation_deg)
+        c.rect(0, 0, width, height, fill=1, stroke=0)
+        c.restoreState()
 
     c.setFillColor(colors.black)
     c.drawString(MARGIN, PAGE_HEIGHT - MARGIN + 5 * mm, "屋根レイアウト")
