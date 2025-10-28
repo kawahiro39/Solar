@@ -27,6 +27,7 @@
     </div>
     <div id="design-container" style="display: none; padding: 10px;">
         <h2>設計画面</h2>
+        <div id="roof-tabs-container"></div>
         <div id="design-controls">
             <label for="azimuth-input">方位 (°):</label>
             <input type="number" id="azimuth-input" value="180">
@@ -35,7 +36,6 @@
             <label for="offset-input">オフセット (cm):</label>
             <input type="number" id="offset-input" value="20" step="1">
             <button id="auto-correct-btn">自動補正</button>
-            <button id="back-to-overview-btn" style="display: none;">一覧へ戻る</button>
         </div>
         <div id="panel-controls">
             <label for="panel-select">パネル選択:</label>
@@ -110,16 +110,22 @@
             if (roofPolygons.length === 0) return;
             document.getElementById('map-container').style.display = 'none';
             document.getElementById('controls').style.display = 'none';
-            // Find and hide all Google Maps controls
             document.querySelectorAll('.gmnoprint').forEach(el => el.style.display = 'none');
             document.getElementById('design-container').style.display = 'block';
 
-            // Handle multiple polygons
             const allCoordinates = roofPolygons.map(polygon => {
                 const path = polygon.getPath();
                 return path.getArray().map(p => ({ lat: p.lat(), lng: p.lng() }));
             });
-            drawPolygonsOnCanvas(allCoordinates);
+
+            setupRoofObjects(allCoordinates); // Prepare data
+            createRoofTabs(); // Create UI tabs
+
+            selectedRoofIndex = 0; // Select the first roof by default
+            if(roofObjects.length > 0) {
+                roofObjects[0].eaveEdgeIndex = 0; // Default to first edge as eave
+            }
+            redrawCanvas(); // Draw the selected roof in detail view
         }
 
         const panelData = {
@@ -129,75 +135,60 @@
         };
 
         let roofObjects = []; // Array to hold { geoCoords, canvasPoints, ... } for each roof
-        let designMode = 'overview'; // Can be 'overview' or 'detail'
-        let selectedRoofIndex = -1;
+        let selectedRoofIndex = 0; // Default to the first roof
         let selectedPointIndex = -1;
         let isDragging = false;
         const pointHitRadius = 10;
         let geoToCanvasScale = 1;
         let solarData = null;
 
-        function drawPolygonsOnCanvas(allCoordinates) {
+        function createRoofTabs() {
+            const tabsContainer = document.getElementById('roof-tabs-container');
+            tabsContainer.innerHTML = '';
+            roofObjects.forEach((roof, index) => {
+                const tab = document.createElement('button');
+                tab.textContent = `Roof ${index + 1}`;
+                tab.onclick = () => {
+                    selectedRoofIndex = index;
+                    if (roofObjects[selectedRoofIndex].eaveEdgeIndex === null) {
+                       roofObjects[selectedRoofIndex].eaveEdgeIndex = 0; // Default eave
+                    }
+                    redrawCanvas();
+                };
+                tabsContainer.appendChild(tab);
+            });
+        }
+
+        function setupRoofObjects(allCoordinates) {
             const canvas = document.getElementById('design-canvas');
             const ctx = canvas.getContext('2d');
-            canvas.width = 800; // Increase canvas size for multiple roofs
+            canvas.width = 800;
             canvas.height = 600;
 
-            // Find the bounding box of ALL polygons
-            let masterMinLng = Infinity, masterMaxLng = -Infinity;
-            let masterMinLat = Infinity, masterMaxLat = -Infinity;
-            allCoordinates.forEach(polygonCoords => {
-                polygonCoords.forEach(c => {
-                    masterMinLng = Math.min(masterMinLng, c.lng);
-                    masterMaxLng = Math.max(masterMaxLng, c.lng);
-                    masterMinLat = Math.min(masterMinLat, c.lat);
-                    masterMaxLat = Math.max(masterMaxLat, c.lat);
-                });
-            });
+            let masterMinLng = Infinity, masterMaxLng = -Infinity, masterMinLat = Infinity, masterMaxLat = -Infinity;
+            allCoordinates.forEach(coords => coords.forEach(c => {
+                masterMinLng = Math.min(masterMinLng, c.lng); masterMaxLng = Math.max(masterMaxLng, c.lng);
+                masterMinLat = Math.min(masterMinLat, c.lat); masterMaxLat = Math.max(masterMaxLat, c.lat);
+            }));
 
-            // Calculate scale to fit all polygons
             const padding = 20;
-            const scaleX = (canvas.width - 2 * padding) / (masterMaxLng - masterMinLng);
-            const scaleY = (canvas.height - 2 * padding) / (masterMaxLat - masterMinLat);
-            const scale = Math.min(scaleX, scaleY);
-
-            // Calculate rotation to make North point up
-            const north = google.maps.geometry.spherical.computeOffset(new google.maps.LatLng(masterMaxLat, masterMinLng), 1, 0);
-            const p1 = { x: 0, y: 0 }; // map point (0,0) for heading calculation
-            const p2 = { x: north.lng() - masterMinLng, y: north.lat() - masterMaxLat }; // vector pointing north
-            const rotationAngle = Math.atan2(p2.y, p2.x) + Math.PI / 2;
-
-            const centerPoint = {
-                x: padding + ((masterMaxLng - masterMinLng) / 2) * scale,
-                y: padding + ((masterMaxLat - masterMinLat) / 2) * scale,
-            };
-
-            geoToCanvasScale = scale / google.maps.geometry.spherical.computeDistanceBetween(
-                 new google.maps.LatLng(masterMinLat, masterMinLng),
-                 new google.maps.LatLng(masterMinLat, masterMinLng + 1)
-            ); // This gives an approximate pixels/degree scale, then needs conversion to meters
+            const scale = Math.min((canvas.width - 2 * padding) / (masterMaxLng - masterMinLng), (canvas.height - 2 * padding) / (masterMaxLat - masterMinLat));
+            geoToCanvasScale = scale / 111320; // Approx meters per degree at equator
 
             roofObjects = allCoordinates.map((coords, index) => {
-                const canvasPoints = coords.map(c => {
-                    const initialX = padding + (c.lng - masterMinLng) * scale;
-                    const initialY = padding + (masterMaxLat - c.lat) * scale;
-                    // Rotate point around the center of the bounding box
-                    const translatedX = initialX - centerPoint.x;
-                    const translatedY = initialY - centerPoint.y;
-                    const rotatedX = translatedX * Math.cos(-rotationAngle) - translatedY * Math.sin(-rotationAngle);
-                    const rotatedY = translatedX * Math.sin(-rotationAngle) + translatedY * Math.cos(-rotationAngle);
-                    return { x: rotatedX + centerPoint.x, y: rotatedY + centerPoint.y };
-                });
+                 const canvasPoints = coords.map(c => ({
+                    x: padding + (c.lng - masterMinLng) * scale,
+                    y: padding + (masterMaxLat - c.lat) * scale
+                }));
                 return {
                     id: index,
                     geoCoords: coords,
                     canvasPoints: canvasPoints,
                     placedPanels: [],
-                    eaveEdgeIndex: null, // To be set by user click
+                    transformedPanels: [],
+                    eaveEdgeIndex: null,
                 };
             });
-
-            redrawCanvas();
         }
 
         function redrawCanvas() {
@@ -205,44 +196,36 @@
             const ctx = canvas.getContext('2d');
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            const roofsToDraw = designMode === 'overview' ? roofObjects : (selectedRoofIndex !== -1 ? [roofObjects[selectedRoofIndex]] : []);
+            if (selectedRoofIndex === -1 || !roofObjects[selectedRoofIndex]) return;
 
-            roofsToDraw.forEach((roof, index) => {
-                if (!roof) return;
-                let points = roof.canvasPoints;
-                if (points.length === 0) return;
+            const roof = roofObjects[selectedRoofIndex];
+            let points = roof.canvasPoints;
+            if (points.length === 0) return;
 
-                if (designMode === 'detail') {
-                    const eaveIndex = roof.eaveEdgeIndex;
-                    if (eaveIndex !== null) {
-                        const p1 = points[eaveIndex];
-                        const p2 = points[(eaveIndex + 1) % points.length];
-                        const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+            const eaveIndex = roof.eaveEdgeIndex;
+            if (eaveIndex !== null) {
+                const p1 = points[eaveIndex];
+                const p2 = points[(eaveIndex + 1) % points.length];
+                const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
 
-                        // Calculate center of the polygon
-                        const center = points.reduce((acc, p) => ({x: acc.x + p.x, y: acc.y + p.y}), {x:0, y:0});
-                        center.x /= points.length;
-                        center.y /= points.length;
+                const center = points.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
+                center.x /= points.length;
+                center.y /= points.length;
 
-                        const canvasCenter = { x: canvas.width / 2, y: canvas.height / 2 };
+                const canvasCenter = { x: canvas.width / 2, y: canvas.height / 2 };
 
-                        points = points.map(p => {
-                            const translatedX = p.x - center.x;
-                            const translatedY = p.y - center.y;
-                            const rotatedX = translatedX * Math.cos(-angle) - translatedY * Math.sin(-angle);
-                            const rotatedY = translatedX * Math.sin(-angle) + translatedY * Math.cos(-angle);
-                            return { x: rotatedX + canvasCenter.x, y: rotatedY + canvasCenter.y };
-                        });
-                        // Store the transformation info and the transformed points
-                        roof.transform = { angle, center, canvasCenter };
-                        roof.detailViewPoints = points;
-                    }
-                } else {
-                    delete roof.detailViewPoints;
-                    delete roof.transform;
-                }
+                points = points.map(p => {
+                    const translatedX = p.x - center.x;
+                    const translatedY = p.y - center.y;
+                    const rotatedX = translatedX * Math.cos(-angle) - translatedY * Math.sin(-angle);
+                    const rotatedY = translatedX * Math.sin(-angle) + translatedY * Math.cos(-angle);
+                    return { x: rotatedX + canvasCenter.x, y: rotatedY + canvasCenter.y };
+                });
+                roof.transform = { angle, center, canvasCenter };
+                roof.detailViewPoints = points;
+            }
 
-                ctx.beginPath();
+            ctx.beginPath();
                 ctx.moveTo(points[0].x, points[0].y);
                 points.forEach(p => ctx.lineTo(p.x, p.y));
                 ctx.closePath();
@@ -284,10 +267,12 @@
 
 
                 // Draw panels for this roof
+                const panelsToDraw = roof.detailViewPoints ? roof.placedPanels : roof.transformedPanels;
                 ctx.strokeStyle = 'blue';
-                roof.placedPanels.forEach(panel => {
-                    ctx.beginPath();
-                    ctx.moveTo(panel[0].x, panel[0].y);
+                if(panelsToDraw) {
+                    panelsToDraw.forEach(panel => {
+                        ctx.beginPath();
+                        ctx.moveTo(panel[0].x, panel[0].y);
                     for (let i = 1; i < panel.length; i++) ctx.lineTo(panel[i].x, panel[i].y);
                     ctx.closePath();
                     ctx.stroke();
@@ -309,26 +294,11 @@
             const rect = e.target.getBoundingClientRect();
             const mouseX = e.clientX - rect.left, mouseY = e.clientY - rect.top;
 
-            const pointsToCheck = (designMode === 'detail' && roofObjects[selectedRoofIndex]?.detailViewPoints)
-                ? roofObjects[selectedRoofIndex].detailViewPoints
-                : null;
-
-            if (designMode === 'overview') {
-                let clickedRoof = false;
-                for (let i = roofObjects.length - 1; i >= 0; i--) {
-                    if (isPointInPolygon({x: mouseX, y: mouseY}, roofObjects[i].canvasPoints)) {
-                        selectedRoofIndex = i;
-                        clickedRoof = true;
-                        break;
-                    }
-                }
-                if(!clickedRoof) selectedRoofIndex = -1;
-            }
-
             if (selectedRoofIndex !== -1) {
                 const selectedRoof = roofObjects[selectedRoofIndex];
                 const activePoints = selectedRoof.detailViewPoints || selectedRoof.canvasPoints;
 
+                // Check for vertex click
                 selectedPointIndex = activePoints.findIndex(p => Math.hypot(mouseX - p.x, mouseY - p.y) < pointHitRadius);
                 if (selectedPointIndex !== -1) {
                     isDragging = true;
@@ -336,23 +306,17 @@
                     return;
                 }
 
-                if(designMode === 'overview') {
-                    for (let i = 0; i < activePoints.length; i++) {
-                        const p1 = activePoints[i];
-                        const p2 = activePoints[(i + 1) % activePoints.length];
-                        const dist = distToSegment({x: mouseX, y: mouseY}, p1, p2);
-                        if (dist < pointHitRadius) {
-                            selectedRoof.eaveEdgeIndex = i;
-                            designMode = 'detail';
-                            document.getElementById('back-to-overview-btn').style.display = 'inline-block';
-                            break;
-                        }
+                // Check for edge click to set eave
+                for (let i = 0; i < activePoints.length; i++) {
+                    const p1 = activePoints[i];
+                    const p2 = activePoints[(i + 1) % activePoints.length];
+                    if (distToSegment({x: mouseX, y: mouseY}, p1, p2) < pointHitRadius) {
+                        selectedRoof.eaveEdgeIndex = i;
+                        redrawCanvas(); // Redraw to show new eave and potentially new orientation
+                        break;
                     }
                 }
-            } else {
-                 selectedPointIndex = -1;
             }
-            redrawCanvas();
         }
 
         function distToSegment(p, v, w) {
@@ -405,44 +369,40 @@
 
         function autoCorrectPolygon() {
             if (selectedRoofIndex === -1) {
-                alert("Please select a roof area to correct.");
+                alert("Please select a roof to correct.");
                 return;
             }
             const roof = roofObjects[selectedRoofIndex];
             const activePoints = roof.detailViewPoints || roof.canvasPoints;
-            if (activePoints.length !== 4) {
-                alert("Auto-correction to a rectangle only works for 4-sided shapes.");
-                return;
+            if (activePoints.length < 3) return;
+
+            const corrected = JSON.parse(JSON.stringify(activePoints));
+            const angleTolerance = 10; // degrees
+
+            for (let i = 0; i < corrected.length; i++) {
+                const p0 = corrected[(i + corrected.length - 1) % corrected.length];
+                const p1 = corrected[i];
+                const p2 = corrected[(i + 1) % corrected.length];
+
+                const v1 = { x: p0.x - p1.x, y: p0.y - p1.y };
+                const v2 = { x: p2.x - p1.x, y: p2.y - p1.y };
+
+                const angleRad = Math.atan2(v2.y, v2.x) - Math.atan2(v1.y, v1.x);
+                let angleDeg = Math.abs(angleRad * 180 / Math.PI);
+                angleDeg = angleDeg > 180 ? 360 - angleDeg : angleDeg;
+
+                if (Math.abs(angleDeg - 90) < angleTolerance) {
+                    // Snap to 90 degrees
+                    const v1_len = Math.hypot(v1.x, v1.y);
+                    const v_perp = { x: -v1.y, y: v1.x };
+                     if ((v2.x * v_perp.x + v2.y * v_perp.y) < 0) {
+                        v_perp.x *= -1; v_perp.y *= -1;
+                    }
+                    const v_perp_norm = { x: v_perp.x / Math.hypot(v_perp.x, v_perp.y), y: v_perp.y / Math.hypot(v_perp.x, v_perp.y) };
+                    const v2_len = Math.hypot(v2.x, v2.y);
+                    corrected[(i + 1) % corrected.length] = { x: p1.x + v_perp_norm.x * v2_len, y: p1.y + v_perp_norm.y * v2_len };
+                }
             }
-
-            // Find the center of the quadrilateral
-            const center = activePoints.reduce((acc, p) => ({x: acc.x + p.x, y: acc.y + p.y}), {x:0, y:0});
-            center.x /= 4;
-            center.y /= 4;
-
-            // Calculate average lengths of opposite sides
-            const l1 = dist(activePoints[0], activePoints[1]);
-            const l2 = dist(activePoints[2], activePoints[3]);
-            const avgWidth = (l1 + l2) / 2;
-
-            const h1 = dist(activePoints[1], activePoints[2]);
-            const h2 = dist(activePoints[3], activePoints[0]);
-            const avgHeight = (h1 + h2) / 2;
-
-            // Find the angle of the first edge
-            const angle = Math.atan2(activePoints[1].y - activePoints[0].y, activePoints[1].x - activePoints[0].x);
-
-            const w_x = (avgWidth / 2) * Math.cos(angle);
-            const w_y = (avgWidth / 2) * Math.sin(angle);
-            const h_x = (avgHeight / 2) * Math.cos(angle + Math.PI/2);
-            const h_y = (avgHeight / 2) * Math.sin(angle + Math.PI/2);
-
-            const corrected = [
-                { x: center.x - w_x - h_x, y: center.y - w_y - h_y },
-                { x: center.x + w_x - h_x, y: center.y + w_y - h_y },
-                { x: center.x + w_x + h_x, y: center.y + w_y + h_y },
-                { x: center.x - w_x + h_x, y: center.y - w_y + h_y }
-            ];
 
             if (roof.detailViewPoints) {
                 roof.detailViewPoints = corrected;
@@ -502,7 +462,20 @@
                 }
             }
 
-            roof.placedPanels = placedPanels; // These panels are in the transformed "detail" space
+            roof.placedPanels = placedPanels;
+
+            // Apply inverse transform to the placed panels
+            const { angle, center, canvasCenter } = roof.transform;
+            roof.transformedPanels = placedPanels.map(panel => {
+                return panel.map(p => {
+                    const translatedX = p.x - canvasCenter.x;
+                    const translatedY = p.y - canvasCenter.y;
+                    const rotatedX = translatedX * Math.cos(angle) - translatedY * Math.sin(angle);
+                    const rotatedY = translatedX * Math.sin(angle) + translatedY * Math.cos(angle);
+                    return { x: rotatedX + center.x, y: rotatedY + center.y };
+                });
+            });
+
             redrawCanvas();
         }
 
@@ -671,13 +644,6 @@
                 }
             });
             document.getElementById('download-pdf-btn').addEventListener('click', generatePDF);
-
-            document.getElementById('back-to-overview-btn').addEventListener('click', () => {
-                designMode = 'overview';
-                selectedRoofIndex = -1;
-                document.getElementById('back-to-overview-btn').style.display = 'none';
-                redrawCanvas();
-            });
 
             const canvas = document.getElementById('design-canvas');
             canvas.addEventListener('mousedown', handleMouseDown);
