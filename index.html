@@ -32,8 +32,8 @@
             <input type="number" id="azimuth-input" value="180">
             <label for="pitch-input">傾斜 (°):</label>
             <input type="number" id="pitch-input" value="30">
-            <label for="offset-input">オフセット (m):</label>
-            <input type="number" id="offset-input" value="0.2" step="0.1">
+            <label for="offset-input">オフセット (cm):</label>
+            <input type="number" id="offset-input" value="20" step="1">
             <button id="auto-correct-btn">自動補正</button>
             <button id="back-to-overview-btn" style="display: none;">一覧へ戻る</button>
         </div>
@@ -233,11 +233,13 @@
                             const rotatedY = translatedX * Math.sin(-angle) + translatedY * Math.cos(-angle);
                             return { x: rotatedX + canvasCenter.x, y: rotatedY + canvasCenter.y };
                         });
-                        // Store the transformed points for interaction
+                        // Store the transformation info and the transformed points
+                        roof.transform = { angle, center, canvasCenter };
                         roof.detailViewPoints = points;
                     }
                 } else {
-                    delete roof.detailViewPoints; // Clear transformed points when in overview
+                    delete roof.detailViewPoints;
+                    delete roof.transform;
                 }
 
                 ctx.beginPath();
@@ -263,7 +265,11 @@
                 }
 
                 // Draw the offset polygon
-                const offsetDistance = parseFloat(document.getElementById('offset-input').value) * geoToCanvasScale;
+                const offsetCm = parseFloat(document.getElementById('offset-input').value);
+                let offsetDistance = (offsetCm / 100) * geoToCanvasScale;
+                 if (isPolygonClockwise(points)) {
+                    offsetDistance = -offsetDistance;
+                }
                 const offsetPoints = getOffsetPolygon(points, -offsetDistance);
                 if (offsetPoints.length > 2) {
                     ctx.beginPath();
@@ -375,7 +381,27 @@
             }
         }
 
-        function handleMouseUp() { isDragging = false; }
+        function handleMouseUp() {
+            if (isDragging && selectedRoofIndex !== -1 && roofObjects[selectedRoofIndex].detailViewPoints) {
+                applyInverseTransform(roofObjects[selectedRoofIndex]);
+            }
+            isDragging = false;
+        }
+
+        function dist(p1, p2) {
+            return Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        }
+
+        function applyInverseTransform(roof) {
+            const { angle, center, canvasCenter } = roof.transform;
+            roof.canvasPoints = roof.detailViewPoints.map(p => {
+                const translatedX = p.x - canvasCenter.x;
+                const translatedY = p.y - canvasCenter.y;
+                const rotatedX = translatedX * Math.cos(angle) - translatedY * Math.sin(angle);
+                const rotatedY = translatedX * Math.sin(angle) + translatedY * Math.cos(angle);
+                return { x: rotatedX + center.x, y: rotatedY + center.y };
+            });
+        }
 
         function autoCorrectPolygon() {
             if (selectedRoofIndex === -1) {
@@ -383,26 +409,47 @@
                 return;
             }
             const roof = roofObjects[selectedRoofIndex];
-             const activePoints = roof.detailViewPoints || roof.canvasPoints;
-            if (activePoints.length < 3) return;
-
-            const corrected = JSON.parse(JSON.stringify(activePoints));
-            for (let i = 0; i < corrected.length; i++) {
-                const p0 = corrected[(i + corrected.length - 1) % corrected.length];
-                const p1 = corrected[i];
-                const p2 = corrected[(i + 1) % corrected.length];
-                const v1 = { x: p0.x - p1.x, y: p0.y - p1.y };
-                const v2 = { x: p2.x - p1.x, y: p2.y - p1.y };
-                const angle = Math.abs((Math.atan2(v2.y, v2.x) - Math.atan2(v1.y, v1.x)) * 180 / Math.PI);
-                if (Math.abs((angle > 180 ? 360 - angle : angle) - 90) < 7) {
-                    const v1_len = Math.hypot(v1.x, v1.y), v_perp = { x: -v1.y, y: v1.x };
-                    if (v2.x * v_perp.x + v2.y * v_perp.y < 0) { v_perp.x *= -1; v_perp.y *= -1; }
-                    const v_perp_norm = { x: v_perp.x / v1_len, y: v_perp.y / v1_len };
-                    const v2_len = Math.hypot(v2.x, v2.y);
-                    corrected[(i + 1) % corrected.length] = { x: p1.x + v_perp_norm.x * v2_len, y: p1.y + v_perp_norm.y * v2_len };
-                }
+            const activePoints = roof.detailViewPoints || roof.canvasPoints;
+            if (activePoints.length !== 4) {
+                alert("Auto-correction to a rectangle only works for 4-sided shapes.");
+                return;
             }
-            roof.canvasPoints = corrected;
+
+            // Find the center of the quadrilateral
+            const center = activePoints.reduce((acc, p) => ({x: acc.x + p.x, y: acc.y + p.y}), {x:0, y:0});
+            center.x /= 4;
+            center.y /= 4;
+
+            // Calculate average lengths of opposite sides
+            const l1 = dist(activePoints[0], activePoints[1]);
+            const l2 = dist(activePoints[2], activePoints[3]);
+            const avgWidth = (l1 + l2) / 2;
+
+            const h1 = dist(activePoints[1], activePoints[2]);
+            const h2 = dist(activePoints[3], activePoints[0]);
+            const avgHeight = (h1 + h2) / 2;
+
+            // Find the angle of the first edge
+            const angle = Math.atan2(activePoints[1].y - activePoints[0].y, activePoints[1].x - activePoints[0].x);
+
+            const w_x = (avgWidth / 2) * Math.cos(angle);
+            const w_y = (avgWidth / 2) * Math.sin(angle);
+            const h_x = (avgHeight / 2) * Math.cos(angle + Math.PI/2);
+            const h_y = (avgHeight / 2) * Math.sin(angle + Math.PI/2);
+
+            const corrected = [
+                { x: center.x - w_x - h_x, y: center.y - w_y - h_y },
+                { x: center.x + w_x - h_x, y: center.y + w_y - h_y },
+                { x: center.x + w_x + h_x, y: center.y + w_y + h_y },
+                { x: center.x - w_x + h_x, y: center.y - w_y + h_y }
+            ];
+
+            if (roof.detailViewPoints) {
+                roof.detailViewPoints = corrected;
+                applyInverseTransform(roof);
+            } else {
+                roof.canvasPoints = corrected;
+            }
             redrawCanvas();
         }
 
@@ -422,7 +469,14 @@
             const panelWidth = panel.width * geoToCanvasScale;
             const panelHeight = panel.height * geoToCanvasScale;
 
-            const offsetDistance = parseFloat(document.getElementById('offset-input').value) * geoToCanvasScale;
+            const offsetCm = parseFloat(document.getElementById('offset-input').value);
+            let offsetDistance = (offsetCm / 100) * geoToCanvasScale;
+
+            // Ensure offset is always inwards by checking polygon winding order
+            if (isPolygonClockwise(canvasPoints)) {
+                offsetDistance = -offsetDistance;
+            }
+
             const placementPolygon = getOffsetPolygon(canvasPoints, -offsetDistance);
 
             if (placementPolygon.length < 3) {
@@ -487,10 +541,17 @@
             if (den === 0) return null; // Parallel
             const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den;
             const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / den;
-            if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
-                return { x: x1 + t * (x2 - x1), y: y1 + t * (y2 - y1) };
+            return { x: x1 + t * (x2 - x1), y: y1 + t * (y2 - y1) };
+        }
+
+        function isPolygonClockwise(points) {
+            let area = 0;
+            for (let i = 0; i < points.length; i++) {
+                const j = (i + 1) % points.length;
+                area += points[i].x * points[j].y;
+                area -= points[j].x * points[i].y;
             }
-            return { x: x1 + t * (x2 - x1), y: y1 + t * (y2 - y1) }; // Return intersection even if outside segment
+            return area > 0;
         }
 
 

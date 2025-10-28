@@ -1,41 +1,39 @@
 # Manual Verification Steps
 
-Please use the following steps to manually verify the implemented features in a standard web browser.
+Please use the following steps to manually verify all recent changes.
 
-## Instructions
+## 1. Setup
+*   **Open `index.html`** in a modern web browser.
+*   Use the map tool to draw a **slightly irregular, non-rectangular quadrilateral** (a 4-sided shape) on a roof.
+*   Draw a **second, more complex polygon (e.g., 5 or 6 sides)** on another roof nearby.
+*   Click the **"設計画面へ"** button.
 
-1.  **Open `index.html`:** Open the file in a modern web browser.
+## 2. Verify Offset Fixes
+*   In the Design View (Overview Mode), click to select your **irregular quadrilateral**.
+*   **[VERIFY]** The "オフセット (cm)" label is displayed, and the default value is "20".
+*   Look at the dashed blue line representing the offset. **[VERIFY]** It should be drawn clearly **inside** the polygon.
+*   Change the offset value to "50". **[VERIFY]** The dashed line should move further inward.
 
-2.  **Draw Polygons:**
-    *   Use the "Draw a polygon" tool on the map to draw two separate, non-rectangular, rotated polygons on different roof surfaces.
-    *   **[VERIFY]** The "設計画面へ" (To Design View) button appears.
+## 3. Verify Auto-Correction and Drawing Integrity
+*   With the irregular quadrilateral still selected, click the **"自動補正"** button.
+*   **[VERIFY]** The shape should instantly transform into a **perfect rectangle**.
+*   Drag one of the corners of this new rectangle to a new position.
+*   Click the **"一覧へ戻る"** button (if you were in detail view) or simply deselect the object.
+*   Reselect the same roof object. **[VERIFY]** Your edit should be preserved, and the shape should not be distorted.
 
-3.  **Verify Overview Mode:**
-    *   Click the "設計画面へ" button.
-    *   **[VERIFY]** The design view opens in "Overview Mode". Both polygons are displayed, preserving their rotation and relative positions from the map. The view is oriented with geographic North facing up.
+## 4. Verify "Unfolded" Detail Mode
+*   Click on one of the edges of the corrected rectangle to set it as the eave.
+*   **[VERIFY]** The view immediately switches to "Detail Mode".
+*   **[VERIFY]** The rectangle is now drawn with the selected eave edge perfectly **horizontal**.
+*   Drag a vertex of the rectangle in this mode.
+*   Click the **"一覧へ戻る"** button.
+*   **[VERIFY]** The main overview is shown again. The rectangle should now have your edited shape, correctly rotated back to its original position. **The shape must not be distorted.**
 
-4.  **Enter and Verify Detail (Expanded) Mode:**
-    *   Click inside one of the polygons to select it.
-    *   **[VERIFY]** The selected polygon is highlighted, and its vertices (red dots) appear.
-    *   Click on one of the edges of the selected polygon.
-    *   **[VERIFY]** The view immediately switches to "Detail Mode".
-    *   **[VERIFY]** Only the selected polygon is visible.
-    *   **[VERIFY]** The polygon has been rotated and moved so that the edge you clicked (the "eave") is now a straight, horizontal line at the bottom of the group of drawn panels.
-    *   **[VERIFY]** A "一覧へ戻る" (Back to Overview) button is now visible.
-
-5.  **Test Panel Placement in Detail Mode:**
-    *   In the "オフセット (m)" input, enter `0.1`.
-    *   Click "パネルを自動配置" (Auto-place Panels).
-    *   **[VERIFY]** Panels are placed within the straightened polygon. They are aligned with the horizontal eave and respect the offset boundary (dashed blue line).
-    *   **[VERIFY]** The results section updates with a panel count and energy estimate.
-
-6.  **Return to Overview:**
-    *   Click the "一覧へ戻る" button.
-    *   **[VERIFY]** The view returns to the "Overview Mode", showing both original polygons again.
-    *   **[VERIFY]** The panels you just placed should be visible on the corresponding roof, correctly rotated and positioned within the original, un-straightened polygon.
-
-7.  **Verify PDF Report:**
-    *   Click "PDFをダウンロード" (Download PDF).
-    *   **[VERIFY]** The downloaded PDF contains a screenshot of the **Overview Mode**, showing both roofs (one with panels). The second page should show the aggregated monthly energy data.
+## 5. Verify Panel Placement
+*   Select the corrected rectangle again and click the eave edge to enter "Detail Mode".
+*   Click **"パネルを自動配置"**.
+*   **[VERIFY]** Panels should fill the rectangle, aligned with the horizontal eave, respecting the 50cm offset.
+*   Click **"一覧へ戻る"**.
+*   **[VERIFY]** The panels are correctly shown on the rotated rectangle in the overview.
 
 If all these points are confirmed, the implementation is successful.
