@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>太陽光簡易シミュレーションシステム</title>
+    <style>
+        /* Global Styles */
+        body {
+            font-family: sans-serif;
+            margin: 0;
+        }
+
+        #controls {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <div id="map-container" style="height: 100vh;"></div>
+    <div id="controls">
+        <button id="to-design-btn" style="display: none;">設計画面へ</button>
+    </div>
+    <div id="design-container" style="display: none; padding: 10px;">
+        <h2>設計画面</h2>
+        <div id="design-controls">
+            <label for="azimuth-input">方位 (°):</label>
+            <input type="number" id="azimuth-input" value="180">
+            <label for="pitch-input">傾斜 (°):</label>
+            <input type="number" id="pitch-input" value="30">
+            <button id="auto-correct-btn">自動補正</button>
+        </div>
+        <div id="panel-controls">
+            <label for="panel-select">パネル選択:</label>
+            <select id="panel-select">
+                <option value="CS6.2-48TM-455">CS6.2-48TM-455 (455W)</option>
+                <option value="CS6.2-36TM-340">CS6.2-36TM-340 (340W)</option>
+                <option value="CS6.2-32TM-300">CS6.2-32TM-300 (300W)</option>
+            </select>
+            <button id="auto-place-btn">パネルを自動配置</button>
+        </div>
+        <canvas id="design-canvas" style="border: 1px solid black;"></canvas>
+    </div>
+    <div id="results-container" style="padding: 10px;">
+        <h2>シミュレーション結果</h2>
+        <ul id="results-list">
+            <li>設置パネル枚数: <span id="panel-count">0</span> 枚</li>
+            <li>年間想定発電量: <span id="yearly-energy">0</span> kWh</li>
+        </ul>
+        <button id="download-pdf-btn">PDFをダウンロード</button>
+    </div>
+
+    <!-- Libraries for PDF Generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.0/chart.min.js"></script>
+
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDmrtd9_lCHwfRIysJ4q7q0gaZvGxbmPtc&callback=initMap&libraries=drawing,geometry&v=weekly" defer></script>
+    <script>
+        // Global variables
+        let map;
+        let drawingManager;
+        let roofPolygon = null;
+
+        // Initialize the map
+        function initMap() {
+            const mapOptions = {
+                center: { lat: 35.6895, lng: 139.6917 },
+                zoom: 18,
+                mapTypeId: 'satellite',
+                disableDefaultUI: true,
+            };
+
+            map = new google.maps.Map(document.getElementById('map-container'), mapOptions);
+
+            drawingManager = new google.maps.drawing.DrawingManager({
+                drawingMode: google.maps.drawing.OverlayType.POLYGON,
+                drawingControl: true,
+                drawingControlOptions: {
+                    position: google.maps.ControlPosition.TOP_CENTER,
+                    drawingModes: [google.maps.drawing.OverlayType.POLYGON],
+                },
+                polygonOptions: {
+                    fillColor: '#FF0000',
+                    fillOpacity: 0.5,
+                    strokeWeight: 2,
+                    strokeColor: '#FF0000',
+                    editable: true,
+                    draggable: true,
+                },
+            });
+
+            drawingManager.setMap(map);
+
+            google.maps.event.addListener(drawingManager, 'polygoncomplete', function (polygon) {
+                if (roofPolygon) {
+                    roofPolygon.setMap(null);
+                }
+                roofPolygon = polygon;
+                drawingManager.setDrawingMode(null);
+                document.getElementById('to-design-btn').style.display = 'block';
+            });
+        }
+
+        function toDesignView() {
+            if (!roofPolygon) return;
+            document.getElementById('map-container').style.display = 'none';
+            document.getElementById('controls').style.display = 'none';
+            // Find and hide all Google Maps controls
+            document.querySelectorAll('.gmnoprint').forEach(el => el.style.display = 'none');
+            document.getElementById('design-container').style.display = 'block';
+            const path = roofPolygon.getPath();
+            const coordinates = path.getArray().map(p => ({ lat: p.lat(), lng: p.lng() }));
+            drawPolygonOnCanvas(coordinates);
+        }
+
+        const panelData = {
+            "CS6.2-48TM-455": { width: 1.134, height: 2.024 },
+            "CS6.2-36TM-340": { width: 1.134, height: 1.520 },
+            "CS6.2-32TM-300": { width: 1.134, height: 1.352 }
+        };
+
+        let canvasPoints = [], selectedPointIndex = -1, isDragging = false;
+        const pointHitRadius = 10;
+        let placedPanels = [], geoToCanvasScale = 1, solarData = null;
+
+        function drawPolygonOnCanvas(coordinates) {
+            const canvas = document.getElementById('design-canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 500;
+            canvas.height = 500;
+
+            const realWorldDist = google.maps.geometry.spherical.computeDistanceBetween(
+                new google.maps.LatLng(coordinates[0]), new google.maps.LatLng(coordinates[1])
+            );
+
+            let minLng = coordinates[0].lng, maxLng = coordinates[0].lng;
+            let minLat = coordinates[0].lat, maxLat = coordinates[0].lat;
+            coordinates.forEach(c => {
+                minLng = Math.min(minLng, c.lng); maxLng = Math.max(maxLng, c.lng);
+                minLat = Math.min(minLat, c.lat); maxLat = Math.max(maxLat, c.lat);
+            });
+
+            const padding = 20;
+            const scale = Math.min((canvas.width - 2 * padding) / (maxLng - minLng), (canvas.height - 2 * padding) / (maxLat - minLat));
+
+            canvasPoints = coordinates.map(c => ({
+                x: padding + (c.lng - minLng) * scale,
+                y: padding + (maxLat - c.lat) * scale
+            }));
+
+            const canvasDist = Math.hypot(canvasPoints[1].x - canvasPoints[0].x, canvasPoints[1].y - canvasPoints[0].y);
+            geoToCanvasScale = canvasDist / realWorldDist;
+            placedPanels = [];
+            redrawCanvas();
+        }
+
+        function redrawCanvas() {
+            const canvas = document.getElementById('design-canvas');
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (canvasPoints.length > 0) {
+                ctx.beginPath();
+                ctx.moveTo(canvasPoints[0].x, canvasPoints[0].y);
+                canvasPoints.forEach(p => ctx.lineTo(p.x, p.y));
+                ctx.closePath();
+                ctx.fillStyle = "rgba(200, 200, 200, 0.7)";
+                ctx.fill();
+                ctx.strokeStyle = "black";
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                ctx.strokeStyle = 'blue';
+                placedPanels.forEach(panel => {
+                    ctx.beginPath();
+                    ctx.moveTo(panel[0].x, panel[0].y);
+                    for (let i = 1; i < panel.length; i++) ctx.lineTo(panel[i].x, panel[i].y);
+                    ctx.closePath();
+                    ctx.stroke();
+                });
+
+                ctx.fillStyle = 'red';
+                canvasPoints.forEach(p => {
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, pointHitRadius / 2, 0, 2 * Math.PI);
+                    ctx.fill();
+                });
+            }
+        }
+
+        function handleMouseDown(e) {
+            const rect = e.target.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left, mouseY = e.clientY - rect.top;
+            selectedPointIndex = canvasPoints.findIndex(p => Math.hypot(mouseX - p.x, mouseY - p.y) < pointHitRadius);
+            if (selectedPointIndex !== -1) isDragging = true;
+        }
+
+        function handleMouseMove(e) {
+            if (isDragging && selectedPointIndex !== -1) {
+                const rect = e.target.getBoundingClientRect();
+                canvasPoints[selectedPointIndex].x = e.clientX - rect.left;
+                canvasPoints[selectedPointIndex].y = e.clientY - rect.top;
+                redrawCanvas();
+            }
+        }
+
+        function handleMouseUp() { isDragging = false; selectedPointIndex = -1; }
+
+        function autoCorrectPolygon() {
+            if (canvasPoints.length < 3) return;
+            const corrected = JSON.parse(JSON.stringify(canvasPoints));
+            for (let i = 0; i < corrected.length; i++) {
+                const p0 = corrected[(i + corrected.length - 1) % corrected.length];
+                const p1 = corrected[i];
+                const p2 = corrected[(i + 1) % corrected.length];
+                const v1 = { x: p0.x - p1.x, y: p0.y - p1.y };
+                const v2 = { x: p2.x - p1.x, y: p2.y - p1.y };
+                const angle = Math.abs((Math.atan2(v2.y, v2.x) - Math.atan2(v1.y, v1.x)) * 180 / Math.PI);
+                if (Math.abs((angle > 180 ? 360 - angle : angle) - 90) < 7) {
+                    const v1_len = Math.hypot(v1.x, v1.y), v_perp = { x: -v1.y, y: v1.x };
+                    if (v2.x * v_perp.x + v2.y * v_perp.y < 0) { v_perp.x *= -1; v_perp.y *= -1; }
+                    const v_perp_norm = { x: v_perp.x / v1_len, y: v_perp.y / v1_len };
+                    const v2_len = Math.hypot(v2.x, v2.y);
+                    corrected[(i + 1) % corrected.length] = { x: p1.x + v_perp_norm.x * v2_len, y: p1.y + v_perp_norm.y * v2_len };
+                }
+            }
+            canvasPoints = corrected;
+            redrawCanvas();
+        }
+
+        function autoPlacePanels() {
+            const panel = panelData[document.getElementById('panel-select').value];
+            const pW = panel.width * geoToCanvasScale, pH = panel.height * geoToCanvasScale;
+            let longestEdgeIndex = 0, maxLen = 0;
+            for (let i = 0; i < canvasPoints.length; i++) {
+                const len = Math.hypot(canvasPoints[(i + 1) % canvasPoints.length].x - canvasPoints[i].x, canvasPoints[(i + 1) % canvasPoints.length].y - canvasPoints[i].y);
+                if (len > maxLen) { maxLen = len; longestEdgeIndex = i; }
+            }
+            const p1 = canvasPoints[longestEdgeIndex], p2 = canvasPoints[(longestEdgeIndex + 1) % canvasPoints.length];
+            const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x), cosA = Math.cos(angle), sinA = Math.sin(angle);
+            const box = canvasPoints.reduce((b, p) => ({ minX: Math.min(b.minX, p.x), maxX: Math.max(b.maxX, p.x), minY: Math.min(b.minY, p.y), maxY: Math.max(b.maxY, p.y) }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
+            let bestPanels = [];
+            [[pW, pH], [pH, pW]].forEach(([w, h]) => {
+                let currentPanels = [];
+                for (let y = box.minY; y < box.maxY; y += h) {
+                    for (let x = box.minX; x < box.maxX; x += w) {
+                        const center = { x: x + w / 2, y: y + h / 2 };
+                        const corners = [{ x: x, y: y }, { x: x + w, y: y }, { x: x + w, y: y + h }, { x: x, y: y + h }].map(p => ({
+                            x: (p.x - center.x) * cosA - (p.y - center.y) * sinA + center.x,
+                            y: (p.x - center.x) * sinA + (p.y - center.y) * cosA + center.y
+                        }));
+                        if (corners.every(c => isPointInPolygon(c, canvasPoints))) currentPanels.push(corners);
+                    }
+                }
+                if (currentPanels.length > bestPanels.length) bestPanels = currentPanels;
+            });
+            placedPanels = bestPanels;
+            redrawCanvas();
+        }
+
+        function isPointInPolygon(point, polygon) {
+            let isInside = false;
+            for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+                if (((polygon[i].y > point.y) !== (polygon[j].y > point.y)) && (point.x < (polygon[j].x - polygon[i].x) * (point.y - polygon[i].y) / (polygon[j].y - polygon[i].y) + polygon[i].x)) {
+                    isInside = !isInside;
+                }
+            }
+            return isInside;
+        }
+
+        async function getSolarPotential() {
+            if (!roofPolygon) return;
+            const bounds = new google.maps.LatLngBounds();
+            roofPolygon.getPath().forEach(p => bounds.extend(p));
+            const center = bounds.getCenter();
+            const API_KEY = 'AIzaSyDmrtd9_lCHwfRIysJ4q7q0gaZvGxbmPtc';
+            const url = `https://solar.googleapis.com/v1/buildingInsights:findClosest?location.latitude=${center.lat()}&location.longitude=${center.lng()}&requiredQuality=HIGH&key=${API_KEY}`;
+            try {
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`API request failed: ${response.status}`);
+                solarData = await response.json();
+                updateResults();
+            } catch (error) {
+                console.error('Error fetching Solar API data:', error);
+                alert('太陽光発電ポテンシャルの取得に失敗しました。');
+            }
+        }
+
+        function updateResults() {
+            const panelCount = placedPanels.length;
+            document.getElementById('panel-count').textContent = panelCount;
+            if (solarData && solarData.solarPotential) {
+                let yearlyEnergy = 0;
+                const panelCapacityWatts = parseFloat(document.getElementById('panel-select').value.split('-').pop());
+                if (solarData.solarPotential.solarPanelConfigs.length > 0) {
+                    const config = solarData.solarPotential.solarPanelConfigs[0];
+                    yearlyEnergy = (panelCount * panelCapacityWatts) / (config.panelsCount * config.panelCapacityWatts) * config.yearlyEnergyDcKwh;
+                }
+                document.getElementById('yearly-energy').textContent = yearlyEnergy.toFixed(2);
+            }
+        }
+
+        function generatePDF() {
+            if (!solarData || placedPanels.length === 0) {
+                alert("シミュレーションを実行してからPDFをダウンロードしてください。");
+                return;
+            }
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            doc.text("太陽光シミュレーションレポート", 20, 20);
+            const canvasImage = document.getElementById('design-canvas').toDataURL('image/png', 1.0);
+            doc.addImage(canvasImage, 'PNG', 15, 40, 180, 150);
+            doc.text(`パネル設置枚数: ${placedPanels.length} 枚`, 20, 200);
+            doc.text(`年間想定発電量: ${document.getElementById('yearly-energy').textContent} kWh`, 20, 210);
+            doc.addPage();
+            doc.text("月別発電量 (kWh)", 20, 20);
+            const chartCanvas = document.createElement('canvas');
+            const monthlyData = solarData.solarPotential.monthlyFluxes.map(m => m.kWh * (placedPanels.length / solarData.solarPotential.solarPanelConfigs[0].panelsCount)); // Scale by panel count
+            new Chart(chartCanvas, {
+                type: 'bar',
+                data: {
+                    labels: ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'],
+                    datasets: [{ label: '月別発電量 (kWh)', data: monthlyData, backgroundColor: 'rgba(54, 162, 235, 0.6)' }]
+                },
+                options: { animation: { onComplete: () => {
+                    doc.addImage(chartCanvas.toDataURL('image/png', 1.0), 'PNG', 20, 40, 170, 85);
+                    doc.save('simulation_report.pdf');
+                }}}
+            });
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('to-design-btn').addEventListener('click', toDesignView);
+            document.getElementById('auto-correct-btn').addEventListener('click', autoCorrectPolygon);
+            document.getElementById('auto-place-btn').addEventListener('click', () => { autoPlacePanels(); getSolarPotential(); });
+            document.getElementById('download-pdf-btn').addEventListener('click', generatePDF);
+            const canvas = document.getElementById('design-canvas');
+            canvas.addEventListener('mousedown', handleMouseDown);
+            canvas.addEventListener('mousemove', handleMouseMove);
+            canvas.addEventListener('mouseup', handleMouseUp);
+            canvas.addEventListener('mouseleave', handleMouseUp);
+        });
+    </script>
+</body>
+</html>
