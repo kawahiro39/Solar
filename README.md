@@ -27,7 +27,8 @@ Google Maps航空写真上で屋根の形状を描画し、太陽光パネルの
     ├── index.html      # メインHTML
     ├── script.js       # JavaScript
     ├── style.css       # スタイル
-    └── bubble-embed.html # Bubble埋め込み用統合版
+    ├── bubble-embed.html # Bubble埋め込み用統合版（旧版）
+    └── bubble-embed-fixed.html # 修正版（描画機能修正済み）
 
 ```
 
@@ -44,36 +45,21 @@ Bubbleに埋め込む際は、以下の手順で設定してください：
 1. **Bubbleエディタで「HTML」要素を追加**
 
 2. **以下のHTMLコードをコピーして貼り付け**
-   - `frontend/bubble-embed.html` の内容を使用
-   - または以下の設定箇所のみを編集：
-
-```javascript
-// ============================================
-// 設定 - ここを編集してください
-// ============================================
-
-// 1. Cloud RunのAPIエンドポイントURLを設定
-const API_BASE_URL = 'https://your-cloud-run-url.run.app';
-
-// 2. Google Maps APIキーを設定
-// HTMLの下部にある以下の行を編集：
-<script async defer 
-    src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&libraries=drawing,geometry&callback=initMap">
-</script>
-```
+   - 下記の完全なHTMLコードを使用
+   - 設定が必要な箇所は2つだけ
 
 ### 3. 設定が必要な2箇所
 
-#### ① API URLの設定（JavaScript内）
+#### ① API URLの設定（562行目付近）
 ```javascript
 const API_BASE_URL = 'https://your-cloud-run-url.run.app';  
 // ↑ あなたのCloud Run URLに置き換える
 ```
 
-#### ② Google Maps APIキーの設定（HTML内）
-```html
-src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&libraries=drawing,geometry&callback=initMap"
-// ↑ YOUR_GOOGLE_MAPS_API_KEY を実際のAPIキーに置き換える
+#### ② Google Maps APIキーの設定（563行目付近）
+```javascript
+const GOOGLE_MAPS_API_KEY = 'YOUR_GOOGLE_MAPS_API_KEY';
+// ↑ あなたのGoogle Maps APIキーに置き換える
 ```
 
 ### 4. Bubbleでの設定推奨値
@@ -82,33 +68,14 @@ src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&librar
 - **HTML要素の高さ**: 最小800px推奨
 - **「Run mode」**: 「Every time element is visible」に設定
 
-## 機能詳細
-
-### 1. 屋根形状の描画
-- Google Maps航空写真上でクリックして多角形を作成
-- 作成した多角形の編集・削除機能
-
-### 2. パネル配置
-- 指定されたパネルサイズで多角形内に自動配置
-- オフセット（離隔）の設定可能
-
-### 3. 発電量シミュレーション
-- 設置地点の緯度経度から日射量を計算
-- 年間発電量の予測
-
-### 4. PDF資料生成
-- 1ページ目: レイアウト図（航空写真+パネル配置）
-- 2ページ目: 発電量シミュレーション結果
-
-## 📝 Bubble埋め込み用完全HTMLコード
+## 📝 Bubble埋め込み用完全HTMLコード（修正版）
 
 以下の完全なHTMLコードをBubbleのHTML要素にコピー&ペーストして、2箇所の設定を変更するだけです：
 
 <details>
-<summary>👉 クリックして完全なHTMLコードを表示</summary>
+<summary>👉 クリックして完全なHTMLコード（修正版）を表示</summary>
 
-```html
-<!DOCTYPE html>
+```html<!DOCTYPE html>
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
@@ -345,6 +312,26 @@ src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&librar
             margin: 0 auto 20px;
         }
 
+        /* API Status */
+        .api-status {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 15px;
+            display: none;
+        }
+
+        .api-status.error {
+            background: #f8d7da;
+            border-color: #f5c6cb;
+        }
+
+        .api-status.success {
+            background: #d4edda;
+            border-color: #c3e6cb;
+        }
+
         /* Results Section */
         .results {
             background: white;
@@ -496,6 +483,24 @@ src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&librar
                 height: 400px;
             }
         }
+
+        /* 描画モード時のスタイル */
+        .drawing-mode {
+            border: 2px solid #667eea !important;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(102, 126, 234, 0.7);
+            }
+            70% {
+                box-shadow: 0 0 0 10px rgba(102, 126, 234, 0);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(102, 126, 234, 0);
+            }
+        }
     </style>
 </head>
 <body>
@@ -504,6 +509,11 @@ src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&librar
         <div class="header">
             <h1>太陽光パネル配置シミュレーション</h1>
             <p class="subtitle">屋根の形状を描画してパネル配置をシミュレート</p>
+        </div>
+
+        <!-- API状態表示 -->
+        <div id="api-status" class="api-status">
+            <span id="api-status-text">API接続確認中...</span>
         </div>
 
         <!-- コントロールパネル -->
@@ -555,9 +565,10 @@ src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&librar
             <div class="control-section">
                 <h3>描画ヒント</h3>
                 <ul class="hints">
+                    <li>「屋根を描画」ボタンをクリックして描画モード開始</li>
                     <li>マップをクリックして屋根の角を順番に指定</li>
                     <li>最低3点以上で多角形を作成</li>
-                    <li>右クリックまたはダブルクリックで描画完了</li>
+                    <li>最後の点をクリックまたはダブルクリックで描画完了</li>
                     <li>描画完了後、頂点をドラッグして調整可能</li>
                 </ul>
             </div>
@@ -620,17 +631,13 @@ src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&librar
         </div>
     </div>
 
-    <!-- Google Maps API -->
-    <script async defer 
-        src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&libraries=drawing,geometry&callback=initMap">
-    </script>
-
     <!-- Main JavaScript -->
     <script>
         // ============================================
         // 設定 - ここを編集してください
         // ============================================
         const API_BASE_URL = 'https://your-cloud-run-url.run.app';  // Cloud RunのURLに置き換える
+        const GOOGLE_MAPS_API_KEY = 'YOUR_GOOGLE_MAPS_API_KEY';  // Google Maps APIキーに置き換える
 
         // ============================================
         // メインアプリケーションコード
@@ -642,59 +649,158 @@ src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&librar
         let currentPolygon = null;
         let panelMarkers = [];
         let simulationData = null;
+        let isDrawingMode = false;
+
+        // Google Maps APIを動的にロード
+        function loadGoogleMaps() {
+            const script = document.createElement('script');
+            script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&libraries=drawing,geometry&callback=initMap`;
+            script.async = true;
+            script.defer = true;
+            script.onerror = function() {
+                console.error('Google Maps APIの読み込みに失敗しました');
+                showStatus('Google Maps APIの読み込みに失敗しました。APIキーを確認してください。', 'error');
+                document.getElementById('api-status').style.display = 'block';
+                document.getElementById('api-status').className = 'api-status error';
+                document.getElementById('api-status-text').textContent = 'Google Maps APIエラー: APIキーを確認してください';
+            };
+            document.head.appendChild(script);
+        }
 
         /**
          * Google Maps初期化
          */
-        function initMap() {
-            // 東京を中心に地図を初期化
-            map = new google.maps.Map(document.getElementById('map'), {
-                center: { lat: 35.6762, lng: 139.6503 },
-                zoom: 20,
-                mapTypeId: 'satellite',
-                tilt: 0,
-                mapTypeControl: true,
-                mapTypeControlOptions: {
-                    mapTypeIds: ['satellite', 'hybrid'],
-                    position: google.maps.ControlPosition.TOP_RIGHT
-                }
-            });
-
-            // Drawing Managerを初期化
-            drawingManager = new google.maps.drawing.DrawingManager({
-                drawingMode: null,
-                drawingControl: false,
-                polygonOptions: {
-                    fillColor: '#FF0000',
-                    fillOpacity: 0.3,
-                    strokeColor: '#FF0000',
-                    strokeWeight: 2,
-                    editable: true,
-                    draggable: false
-                }
-            });
-
-            drawingManager.setMap(map);
-
-            // ポリゴン完成時のイベント
-            google.maps.event.addListener(drawingManager, 'polygoncomplete', function(polygon) {
-                handlePolygonComplete(polygon);
-            });
-
-            // 現在地を取得して移動
-            if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(
-                    (position) => {
-                        const pos = {
-                            lat: position.coords.latitude,
-                            lng: position.coords.longitude
-                        };
-                        map.setCenter(pos);
-                    },
-                    () => {
-                        console.log('位置情報の取得に失敗しました');
+        window.initMap = function() {
+            console.log('Google Maps初期化開始');
+            
+            try {
+                // 東京を中心に地図を初期化
+                map = new google.maps.Map(document.getElementById('map'), {
+                    center: { lat: 35.6762, lng: 139.6503 },
+                    zoom: 20,
+                    mapTypeId: 'satellite',
+                    tilt: 0,
+                    mapTypeControl: true,
+                    mapTypeControlOptions: {
+                        mapTypeIds: ['satellite', 'hybrid'],
+                        position: google.maps.ControlPosition.TOP_RIGHT
                     }
-                );
+                });
+
+                // Drawing Managerを初期化
+                drawingManager = new google.maps.drawing.DrawingManager({
+                    drawingMode: null,
+                    drawingControl: false,  // デフォルトのコントロールは非表示
+                    polygonOptions: {
+                        fillColor: '#FF0000',
+                        fillOpacity: 0.3,
+                        strokeColor: '#FF0000',
+                        strokeWeight: 2,
+                        clickable: true,
+                        editable: true,
+                        draggable: false
+                    }
+                });
+
+                drawingManager.setMap(map);
+
+                // ポリゴン完成時のイベント
+                google.maps.event.addListener(drawingManager, 'polygoncomplete', function(polygon) {
+                    console.log('ポリゴン描画完了');
+                    handlePolygonComplete(polygon);
+                });
+
+                // 現在地を取得して移動
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition(
+                        (position) => {
+                            const pos = {
+                                lat: position.coords.latitude,
+                                lng: position.coords.longitude
+                            };
+                            map.setCenter(pos);
+                            console.log('現在地に移動:', pos);
+                        },
+                        () => {
+                            console.log('位置情報の取得に失敗しました');
+                        }
+                    );
+                }
+
+                // API接続テスト
+                testAPIConnection();
+                
+                console.log('Google Maps初期化完了');
+                showStatus('マップの準備ができました', 'success');
+                
+            } catch (error) {
+                console.error('Google Maps初期化エラー:', error);
+                showStatus('マップの初期化に失敗しました', 'error');
+            }
+        }
+
+        /**
+         * API接続テスト
+         */
+        async function testAPIConnection() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/health`, {
+                    method: 'GET',
+                    mode: 'cors'
+                });
+                
+                if (response.ok) {
+                    document.getElementById('api-status').style.display = 'block';
+                    document.getElementById('api-status').className = 'api-status success';
+                    document.getElementById('api-status-text').textContent = '✓ API接続: 正常';
+                    setTimeout(() => {
+                        document.getElementById('api-status').style.display = 'none';
+                    }, 3000);
+                }
+            } catch (error) {
+                document.getElementById('api-status').style.display = 'block';
+                document.getElementById('api-status').className = 'api-status error';
+                document.getElementById('api-status-text').textContent = '⚠ API接続エラー: Cloud Run URLを確認してください';
+            }
+        }
+
+        /**
+         * 描画モードの切り替え
+         */
+        function toggleDrawingMode() {
+            if (!drawingManager) {
+                showStatus('マップが初期化されていません', 'error');
+                return;
+            }
+
+            const btn = document.getElementById('draw-mode-btn');
+            const mapContainer = document.getElementById('map-container');
+            
+            if (isDrawingMode) {
+                // 描画モードを終了
+                drawingManager.setDrawingMode(null);
+                btn.innerHTML = `
+                    <svg class="icon" viewBox="0 0 24 24">
+                        <path d="M3,17.25V21h3.75L17.81,9.94l-3.75-3.75L3,17.25z M20.71,7.04c0.39-0.39,0.39-1.02,0-1.41l-2.34-2.34c-0.39-0.39-1.02-0.39-1.41,0l-1.83,1.83 3.75,3.75 1.83-1.83z"/>
+                    </svg>
+                    屋根を描画
+                `;
+                mapContainer.classList.remove('drawing-mode');
+                isDrawingMode = false;
+                console.log('描画モード終了');
+            } else {
+                // 描画モードを開始
+                drawingManager.setDrawingMode(google.maps.drawing.OverlayType.POLYGON);
+                btn.innerHTML = `
+                    <svg class="icon" viewBox="0 0 24 24">
+                        <path d="M19,6.41L17.59,5 12,10.59 6.41,5 5,6.41 10.59,12 5,17.59 6.41,19 12,13.41 17.59,19 19,17.59 13.41,12z"/>
+                    </svg>
+                    描画を終了
+                `;
+                mapContainer.classList.add('drawing-mode');
+                isDrawingMode = true;
+                showStatus('マップ上をクリックして屋根の形状を描画してください', 'info');
+                console.log('描画モード開始');
             }
         }
 
@@ -708,17 +814,26 @@ src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&librar
             }
             
             currentPolygon = polygon;
+            
+            // 描画モードを終了
             drawingManager.setDrawingMode(null);
+            isDrawingMode = false;
+            document.getElementById('map-container').classList.remove('drawing-mode');
             
             // ボタンの状態を更新
             document.getElementById('calculate-btn').disabled = false;
-            document.getElementById('draw-mode-btn').textContent = '編集モード';
+            document.getElementById('draw-mode-btn').innerHTML = `
+                <svg class="icon" viewBox="0 0 24 24">
+                    <path d="M3,17.25V21h3.75L17.81,9.94l-3.75-3.75L3,17.25z M20.71,7.04c0.39-0.39,0.39-1.02,0-1.41l-2.34-2.34c-0.39-0.39-1.02-0.39-1.41,0l-1.83,1.83 3.75,3.75 1.83-1.83z"/>
+                </svg>
+                屋根を描画
+            `;
             
             // 頂点変更時のイベント
             google.maps.event.addListener(polygon.getPath(), 'set_at', updatePolygon);
             google.maps.event.addListener(polygon.getPath(), 'insert_at', updatePolygon);
             
-            showStatus('屋根の形状を描画しました', 'success');
+            showStatus('屋根の形状を描画しました。頂点をドラッグして調整できます。', 'success');
         }
 
         /**
@@ -727,6 +842,7 @@ src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&librar
         function updatePolygon() {
             clearPanels();
             document.getElementById('generate-pdf-btn').disabled = true;
+            console.log('ポリゴン更新');
         }
 
         /**
@@ -785,19 +901,24 @@ src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&librar
                 }
             };
             
+            console.log('パネル配置計算リクエスト:', requestData);
+            
             try {
                 const response = await fetch(`${API_BASE_URL}/api/calculate-panels`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify(requestData)
+                    body: JSON.stringify(requestData),
+                    mode: 'cors'
                 });
                 
                 if (!response.ok) throw new Error('計算に失敗しました');
                 
                 const data = await response.json();
                 simulationData = data;
+                
+                console.log('パネル配置計算結果:', data);
                 
                 // パネルを地図上に表示
                 displayPanels(data.panels);
@@ -812,7 +933,7 @@ src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&librar
                 
             } catch (error) {
                 console.error('Error:', error);
-                showStatus('パネル配置の計算に失敗しました', 'error');
+                showStatus('パネル配置の計算に失敗しました。API接続を確認してください。', 'error');
             } finally {
                 showLoading(false);
             }
@@ -923,7 +1044,6 @@ src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&librar
             showLoading(true);
             
             try {
-                // Google Maps画像をキャプチャ（簡易版）
                 const mapImage = ''; // TODO: Static Maps APIで取得
                 
                 const requestData = {
@@ -948,7 +1068,8 @@ src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&librar
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify(requestData)
+                    body: JSON.stringify(requestData),
+                    mode: 'cors'
                 });
                 
                 if (!response.ok) throw new Error('PDF生成に失敗しました');
@@ -970,6 +1091,27 @@ src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&librar
             } finally {
                 showLoading(false);
             }
+        }
+
+        /**
+         * 描画をクリア
+         */
+        function clearDrawing() {
+            if (currentPolygon) {
+                currentPolygon.setMap(null);
+                currentPolygon = null;
+            }
+            clearPanels();
+            document.getElementById('calculate-btn').disabled = true;
+            document.getElementById('generate-pdf-btn').disabled = true;
+            document.getElementById('results').classList.add('hidden');
+            
+            // 描画モードも終了
+            if (isDrawingMode) {
+                toggleDrawingMode();
+            }
+            
+            showStatus('描画をクリアしました', 'info');
         }
 
         /**
@@ -1004,56 +1146,59 @@ src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&librar
          * イベントリスナー設定
          */
         document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM読み込み完了');
+            
             // 描画モードボタン
             document.getElementById('draw-mode-btn').addEventListener('click', function() {
-                if (drawingManager.getDrawingMode()) {
-                    drawingManager.setDrawingMode(null);
-                    this.textContent = '屋根を描画';
-                } else {
-                    drawingManager.setDrawingMode(google.maps.drawing.OverlayType.POLYGON);
-                    this.textContent = '描画中...';
-                }
+                console.log('描画ボタンクリック');
+                toggleDrawingMode();
             });
             
             // クリアボタン
             document.getElementById('clear-polygon-btn').addEventListener('click', function() {
-                if (currentPolygon) {
-                    currentPolygon.setMap(null);
-                    currentPolygon = null;
-                }
-                clearPanels();
-                document.getElementById('calculate-btn').disabled = true;
-                document.getElementById('generate-pdf-btn').disabled = true;
-                document.getElementById('results').classList.add('hidden');
-                showStatus('描画をクリアしました', 'info');
+                console.log('クリアボタンクリック');
+                clearDrawing();
             });
             
             // パネル配置ボタン
-            document.getElementById('calculate-btn').addEventListener('click', calculatePanels);
+            document.getElementById('calculate-btn').addEventListener('click', function() {
+                console.log('計算ボタンクリック');
+                calculatePanels();
+            });
             
             // PDF生成ボタン
-            document.getElementById('generate-pdf-btn').addEventListener('click', generatePDF);
+            document.getElementById('generate-pdf-btn').addEventListener('click', function() {
+                console.log('PDF生成ボタンクリック');
+                generatePDF();
+            });
+            
+            // Google Maps APIを読み込み
+            loadGoogleMaps();
         });
     </script>
 </body>
-</html>
-
-```
+</html>```
 
 </details>
 
 ### ⚠️ 重要な設定箇所（2箇所のみ）
 
-1. **523行目付近** - Cloud Run APIのURL：
+1. **562行目付近** - Cloud Run APIのURL：
 ```javascript
-const API_BASE_URL = 'https://your-cloud-run-url.run.app';  // あなたのCloud Run URLに変更
+const API_BASE_URL = "https://your-cloud-run-url.run.app";  // あなたのCloud Run URLに変更
 ```
 
-2. **515行目付近** - Google Maps APIキー：
-```html
-src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&libraries=drawing,geometry&callback=initMap"
-// YOUR_GOOGLE_MAPS_API_KEY を実際のAPIキーに変更
+2. **563行目付近** - Google Maps APIキー：
+```javascript
+const GOOGLE_MAPS_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY";  // あなたのGoogle Maps APIキーに変更
 ```
+
+### 🔧 修正版の改善点
+- 描画ボタンの動作問題を修正
+- Google Maps APIの動的ロード
+- エラーハンドリングの強化
+- API接続状態の表示
+- デバッグログの追加
 
 ## トラブルシューティング
 
