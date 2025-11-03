@@ -26,9 +26,61 @@ Google Maps航空写真上で屋根の形状を描画し、太陽光パネルの
 └── frontend/            # Bubble埋め込み用HTML
     ├── index.html      # メインHTML
     ├── script.js       # JavaScript
-    └── style.css       # スタイル
+    ├── style.css       # スタイル
+    └── bubble-embed.html # Bubble埋め込み用統合版
 
 ```
+
+## 🚀 Bubble埋め込み用HTMLコード
+
+Bubbleに埋め込む際は、以下の手順で設定してください：
+
+### 1. 事前準備
+1. Google Maps JavaScript APIキーを取得
+2. Cloud Run APIをデプロイしてURLを取得
+
+### 2. Bubble埋め込み手順
+
+1. **Bubbleエディタで「HTML」要素を追加**
+
+2. **以下のHTMLコードをコピーして貼り付け**
+   - `frontend/bubble-embed.html` の内容を使用
+   - または以下の設定箇所のみを編集：
+
+```javascript
+// ============================================
+// 設定 - ここを編集してください
+// ============================================
+
+// 1. Cloud RunのAPIエンドポイントURLを設定
+const API_BASE_URL = 'https://your-cloud-run-url.run.app';
+
+// 2. Google Maps APIキーを設定
+// HTMLの下部にある以下の行を編集：
+<script async defer 
+    src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&libraries=drawing,geometry&callback=initMap">
+</script>
+```
+
+### 3. 設定が必要な2箇所
+
+#### ① API URLの設定（JavaScript内）
+```javascript
+const API_BASE_URL = 'https://your-cloud-run-url.run.app';  
+// ↑ あなたのCloud Run URLに置き換える
+```
+
+#### ② Google Maps APIキーの設定（HTML内）
+```html
+src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&libraries=drawing,geometry&callback=initMap"
+// ↑ YOUR_GOOGLE_MAPS_API_KEY を実際のAPIキーに置き換える
+```
+
+### 4. Bubbleでの設定推奨値
+
+- **HTML要素の幅**: 100%（レスポンシブ対応）
+- **HTML要素の高さ**: 最小800px推奨
+- **「Run mode」**: 「Every time element is visible」に設定
 
 ## 機能詳細
 
@@ -47,6 +99,34 @@ Google Maps航空写真上で屋根の形状を描画し、太陽光パネルの
 ### 4. PDF資料生成
 - 1ページ目: レイアウト図（航空写真+パネル配置）
 - 2ページ目: 発電量シミュレーション結果
+
+## 📝 簡単セットアップ用コード
+
+最小限の設定で動作確認したい場合は、以下のコードをBubbleのHTML要素に貼り付けて、2箇所の設定を変更するだけです：
+
+```html
+<!-- bubble-embed.htmlの内容をここにコピー -->
+<!-- 設定箇所1: API_BASE_URL を変更 -->
+<!-- 設定箇所2: YOUR_GOOGLE_MAPS_API_KEY を変更 -->
+```
+
+`frontend/bubble-embed.html` ファイルに完全なコードが含まれています。
+
+## トラブルシューティング
+
+### CORS エラーが発生する場合
+- Cloud Run APIの `main.py` で CORS設定を確認
+- BubbleアプリのドメインがCORS許可リストに含まれているか確認
+
+### Google Maps が表示されない場合
+- APIキーが正しく設定されているか確認
+- APIキーの制限設定（HTTPリファラー）を確認
+- Google Cloud ConsoleでMaps JavaScript APIが有効になっているか確認
+
+### パネル配置が動作しない場合
+- Cloud Run APIが正常に起動しているか確認
+- ブラウザの開発者ツールでネットワークエラーを確認
+- API URLが正しく設定されているか確認
 
 ## 使用技術
 - Google Maps JavaScript API
