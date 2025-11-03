@@ -1,0 +1,40 @@
+# This file specifies files that are *not* uploaded to Google Cloud
+
+.gcloudignore
+.git
+.gitignore
+
+# Python pycache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual env
+venv/
+env/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Frontend files (not needed for API)
+frontend/
+
+# Documentation
+*.md
+LICENSE
+README.md
+DEPLOYMENT_GUIDE.md
+
+# Scripts
+*.sh
+deploy.sh
+run_local.sh
+
+# Test files
+test_*
+*_test.py
+*.test.py
