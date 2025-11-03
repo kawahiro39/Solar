@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API接続テスト</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #667eea;
+            text-align: center;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #5568d3;
+        }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 5px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .success {
+            color: green;
+        }
+        .error {
+            color: red;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 API接続テスト</h1>
+        
+        <div class="test-section">
+            <h2>1. ヘルスチェック</h2>
+            <button onclick="testHealth()">ヘルスチェック実行</button>
+            <div id="health-result" class="result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h2>2. パネル配置計算テスト</h2>
+            <button onclick="testPanelCalculation()">計算実行（テストデータ）</button>
+            <div id="panel-result" class="result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h2>3. 日射量データ取得テスト</h2>
+            <button onclick="testSolarData()">東京の日射量データ取得</button>
+            <div id="solar-result" class="result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h2>設定</h2>
+            <label>API URL: 
+                <input type="text" id="api-url" value="http://localhost:8080" style="width: 300px;">
+            </label>
+            <p style="font-size: 0.9em; color: #666;">
+                ローカル: http://localhost:8080<br>
+                Cloud Run: https://your-service-xxxxx-an.a.run.app
+            </p>
+        </div>
+    </div>
+
+    <script>
+        function getApiUrl() {
+            return document.getElementById('api-url').value;
+        }
+
+        async function testHealth() {
+            const resultDiv = document.getElementById('health-result');
+            resultDiv.textContent = 'テスト中...';
+            
+            try {
+                const response = await fetch(`${getApiUrl()}/health`);
+                const data = await response.json();
+                resultDiv.textContent = `✅ 成功\n\nレスポンス:\n${JSON.stringify(data, null, 2)}`;
+                resultDiv.className = 'result success';
+            } catch (error) {
+                resultDiv.textContent = `❌ エラー\n\n${error.message}\n\nAPIサーバーが起動していることを確認してください。`;
+                resultDiv.className = 'result error';
+            }
+        }
+
+        async function testPanelCalculation() {
+            const resultDiv = document.getElementById('panel-result');
+            resultDiv.textContent = 'テスト中...';
+            
+            // テスト用の屋根形状（約10m x 8mの長方形）
+            const testData = {
+                polygon: [
+                    [35.6762, 139.6503],
+                    [35.6763, 139.6503],
+                    [35.6763, 139.6504],
+                    [35.6762, 139.6504]
+                ],
+                panel_width: 165,  // cm
+                panel_height: 100, // cm
+                offset: 10,        // cm
+                location: {
+                    lat: 35.6762,
+                    lng: 139.6503,
+                    address: "東京都"
+                }
+            };
+            
+            try {
+                const response = await fetch(`${getApiUrl()}/api/calculate-panels`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(testData)
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.textContent = `✅ 成功\n\n` +
+                        `パネル枚数: ${data.panel_count}枚\n` +
+                        `総面積: ${data.total_area?.toFixed(1)} m²\n` +
+                        `年間発電量: ${data.power_estimation?.yearly_total_kwh?.toLocaleString()} kWh\n\n` +
+                        `詳細データ:\n${JSON.stringify(data, null, 2)}`;
+                    resultDiv.className = 'result success';
+                } else {
+                    throw new Error(data.error || 'APIエラー');
+                }
+            } catch (error) {
+                resultDiv.textContent = `❌ エラー\n\n${error.message}`;
+                resultDiv.className = 'result error';
+            }
+        }
+
+        async function testSolarData() {
+            const resultDiv = document.getElementById('solar-result');
+            resultDiv.textContent = 'テスト中...';
+            
+            const testData = {
+                lat: 35.6762,
+                lng: 139.6503
+            };
+            
+            try {
+                const response = await fetch(`${getApiUrl()}/api/get-solar-data`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(testData)
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.textContent = `✅ 成功\n\n` +
+                        `年間平均日射量: ${data.yearly_average_daily_kwh_m2} kWh/m²/day\n` +
+                        `年間総日射量: ${data.annual_total_kwh_m2} kWh/m²\n\n` +
+                        `月別データ:\n${JSON.stringify(data.monthly_data, null, 2)}`;
+                    resultDiv.className = 'result success';
+                } else {
+                    throw new Error(data.error || 'APIエラー');
+                }
+            } catch (error) {
+                resultDiv.textContent = `❌ エラー\n\n${error.message}`;
+                resultDiv.className = 'result error';
+            }
+        }
+
+        // ページ読み込み時にヘルスチェック実行
+        window.addEventListener('load', () => {
+            setTimeout(testHealth, 500);
+        });
+    </script>
+</body>
+</html>
